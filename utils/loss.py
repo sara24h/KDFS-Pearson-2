@@ -3,32 +3,25 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class KDLoss(nn.Module):
-    def __init__(self, temperature=1.0):
+    def __init__(self, temperature=3.0):
         super(KDLoss, self).__init__()
         self.temperature = temperature
 
     def forward(self, logits_t, logits_s):
-        # اطمینان از شکل درست ورودی
         logits_t = logits_t.squeeze(-1) if logits_t.dim() > 1 else logits_t
         logits_s = logits_s.squeeze(-1) if logits_s.dim() > 1 else logits_s
 
-        # تبدیل لوجیت‌ها به احتمالات
+        # نرمال‌سازی لوجیت‌ها
+        logits_t = logits_t / (torch.abs(logits_t).max() + 1e-6)
+        logits_s = logits_s / (torch.abs(logits_s).max() + 1e-6)
+
         prob_t = torch.sigmoid(logits_t / self.temperature)
         prob_s = torch.sigmoid(logits_s / self.temperature)
-        
-        # ساخت توزیع دوکلاسه
         prob_t_2d = torch.stack([1 - prob_t, prob_t], dim=-1)
         prob_s_2d = torch.stack([1 - prob_s, prob_s], dim=-1)
-        
-        # محاسبه لگاریتم احتمالات با پایداری عددی
-        log_prob_s_2d = torch.log(prob_s_2d + 1e-10)
-        
-        return F.kl_div(
-            log_prob_s_2d,
-            prob_t_2d,
-            reduction='batchmean'
-        ) * (self.temperature ** 2)
+        log_prob_s_2d = torch.log(prob_s_2d + 1e-6)  # افزایش به 1e-6
 
+        return F.kl_div(log_prob_s_2d, prob_t_2d, reduction='batchmean') * (self.temperature ** 2)
 
 class RCLoss(nn.Module):
     def __init__(self):
