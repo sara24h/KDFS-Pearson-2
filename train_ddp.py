@@ -381,10 +381,10 @@ class TrainDDP:
 
                     with torch.amp.autocast('cuda'):
                         logits_student, feature_list_student = self.student(images)
-                        #logits_student = logits_student.squeeze(1)
+                        logits_student = logits_student.squeeze(1)
                         with torch.no_grad():
                             logits_teacher, feature_list_teacher = self.teacher(images)
-                            #logits_teacher = logits_teacher.squeeze(1)
+                            logits_teacher = logits_teacher.squeeze(1)
 
                         ori_loss = self.ori_loss(logits_student, targets)
                         kd_loss = self.kd_loss(logits_teacher, logits_student)
@@ -414,7 +414,7 @@ class TrainDDP:
                     scaler.update()
 
                     preds = (torch.sigmoid(logits_student) > 0.5).float()
-                    correct = (preds == targets.unsqueeze(1)).sum().item()
+                    correct = (preds == targets).sum().item()
                     prec1 = 100. * correct / images.size(0)
 
                     dist.barrier()
@@ -506,14 +506,14 @@ class TrainDDP:
                             images = images.cuda()
                             targets = targets.cuda().float()
                             logits_student, _ = self.student(images)
-                            #logits_student = logits_student.squeeze(1)
+                            logits_student = logits_student.squeeze(1)
 
                             # Compute validation loss
                             val_loss = self.ori_loss(logits_student, targets)
                             meter_val_loss.update(val_loss.item(), images.size(0))
 
                             preds = (torch.sigmoid(logits_student) > 0.5).float()
-                            correct = (preds == targets.unsqueeze(1)).sum().item()
+                            correct = (preds == targets).sum().item()
                             prec1 = 100. * correct / images.size(0)
                             n = images.size(0)
                             meter_top1.update(prec1, n)
@@ -577,10 +577,10 @@ class TrainDDP:
                         images = images.cuda()
                         targets = targets.cuda().float()
                         logits_student, _ = self.student(images)
-                        #logits_student = logits_student.squeeze(1)
+                        logits_student = logits_student.squeeze(1)
 
                         preds = (torch.sigmoid(logits_student) > 0.5).float()
-                        correct = (preds == targets.unsqueeze(1)).sum().item()
+                        correct = (preds == targets).sum().item()
                         prec1 = 100. * correct / images.size(0)
                         n = images.size(0)
                         meter_top1.update(prec1, n)
