@@ -16,6 +16,7 @@ from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_
 from utils import utils, loss, meter, scheduler
 from thop import profile
 from model.teacher.ResNet import ResNet_50_hardfakevsreal
+from torch import amp
 
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 
@@ -211,7 +212,7 @@ class TrainDDP:
                     logits, _ = self.teacher(images)
                     #logits = logits.squeeze(1)
                     preds = (torch.sigmoid(logits) > 0.5).float()
-                    correct += (preds == targets).sum().item()
+                    correct += (preds == targets.unsqueeze(1)).sum().item()
                     total += images.size(0)
                     break
                 accuracy = 100. * correct / total
@@ -337,7 +338,7 @@ class TrainDDP:
 
         torch.cuda.empty_cache()
         self.teacher.eval()
-        scaler = GradScaler()
+        scaler = torch.amp.GradScaler('cuda')
 
         if self.resume:
             self.resume_student_ckpt()
@@ -378,7 +379,7 @@ class TrainDDP:
                     images = images.cuda()
                     targets = targets.cuda().float()
 
-                    with autocast():
+                    with torch.amp.autocast('cuda'):
                         logits_student, feature_list_student = self.student(images)
                         #logits_student = logits_student.squeeze(1)
                         with torch.no_grad():
