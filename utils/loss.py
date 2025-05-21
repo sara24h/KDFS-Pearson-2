@@ -32,6 +32,23 @@ class KDLoss(nn.Module):
             reduction="batchmean"
         )
 
+class CombinedLoss(nn.Module):
+    def __init__(self, alpha=0.5):
+        super(CombinedLoss, self).__init__()
+        self.bce_loss = nn.BCEWithLogitsLoss()
+        self.kd_loss = KDLoss()
+        self.alpha = alpha  # وزن برای ترکیب دو خطا
+
+    def forward(self, outputs, targets, logits_t=None):
+        # محاسبه BCE loss
+        bce = self.bce_loss(outputs, targets.float())
+        
+        # اگر logits معلم ارائه شده باشد، KDLoss را محاسبه کن
+        if logits_t is not None:
+            kd = self.kd_loss(logits_t, outputs)
+            return self.alpha * kd + (1 - self.alpha) * bce
+        return bce
+
 
 class RCLoss(nn.Module):
     def __init__(self):
