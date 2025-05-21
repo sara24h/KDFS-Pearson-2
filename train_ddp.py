@@ -28,23 +28,6 @@ Flops_baselines = {
     }
 }
 
-class CombinedLoss(nn.Module):
-    def __init__(self, alpha=0.5):
-        super(CombinedLoss, self).__init__()
-        self.bce_loss = nn.BCEWithLogitsLoss()
-        self.kd_loss = loss.KDLoss()
-        self.alpha = alpha  # وزن برای ترکیب KDLoss و BCEWithLogitsLoss
-
-    def forward(self, outputs, targets, logits_t=None):
-        # محاسبه BCE loss
-        bce = self.bce_loss(outputs, targets.float())
-        
-        # اگر logits معلم ارائه شده باشد، KDLoss را محاسبه کن
-        if logits_t is not None:
-            kd = self.kd_loss(logits_t, outputs)
-            return self.alpha * kd + (1 - self.alpha) * bce
-        return bce
-
 class TrainDDP:
     def __init__(self, args):
         self.args = args
@@ -259,7 +242,7 @@ class TrainDDP:
         self.kd_loss = loss.KDLoss().cuda()
         self.rc_loss = loss.RCLoss().cuda()
         self.mask_loss = loss.MaskLoss().cuda()
-        self.combined_loss = CombinedLoss(alpha=self.coef_kdloss).cuda()  # استفاده از coef_kdloss برای وزن KDLoss
+        self.combined_loss = loss.CombinedLoss(alpha=self.coef_kdloss).cuda() 
 
     def define_optim(self):
         weight_params = map(
@@ -527,7 +510,6 @@ class TrainDDP:
                             logits_teacher, _ = self.teacher(images)
                             logits_teacher = logits_teacher.squeeze(1)
 
-                            # محاسبه val_loss با استفاده از CombinedLoss
                             val_loss = self.combined_loss(logits_student, targets, logits_teacher)
                             meter_val_loss.update(val_loss.item(), images.size(0))
 
