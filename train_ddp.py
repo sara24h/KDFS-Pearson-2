@@ -28,6 +28,23 @@ Flops_baselines = {
     }
 }
 
+class CombinedLoss(nn.Module):
+    def __init__(self, alpha=0.5):
+        super(CombinedLoss, self).__init__()
+        self.bce_loss = nn.BCEWithLogitsLoss()
+        self.kd_loss = loss.KDLoss()
+        self.alpha = alpha  # وزن برای ترکیب KDLoss و BCEWithLogitsLoss
+
+    def forward(self, outputs, targets, logits_t=None):
+        # محاسبه BCE loss
+        bce = self.bce_loss(outputs, targets.float())
+        
+        # اگر logits معلم ارائه شده باشد، KDLoss را محاسبه کن
+        if logits_t is not None:
+            kd = self.kd_loss(logits_t, outputs)
+            return self.alpha * kd + (1 - self.alpha) * bce
+        return bce
+
 class TrainDDP:
     def __init__(self, args):
         self.args = args
@@ -210,7 +227,6 @@ class TrainDDP:
                     images = images.cuda()
                     targets = targets.cuda().float()
                     logits, _ = self.teacher(images)
-                    #logits = logits.squeeze(1)
                     preds = (torch.sigmoid(logits) > 0.5).float()
                     correct += (preds == targets.unsqueeze(1)).sum().item()
                     total += images.size(0)
@@ -243,6 +259,7 @@ class TrainDDP:
         self.kd_loss = loss.KDLoss().cuda()
         self.rc_loss = loss.RCLoss().cuda()
         self.mask_loss = loss.MaskLoss().cuda()
+        self.combined_loss = CombinedLoss(alpha=self.coef_kdloss).cuda()  # استفاده از coef_kdloss برای وزن KDLoss
 
     def define_optim(self):
         weight_params = map(
@@ -350,7 +367,7 @@ class TrainDDP:
             meter_maskloss = meter.AverageMeter("MaskLoss", ":.6e")
             meter_loss = meter.AverageMeter("Loss", ":.4e")
             meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
-            meter_val_loss = meter.AverageMeter("ValLoss", ":.4e")  # Added validation loss meter
+            meter_val_loss = meter.AverageMeter("ValLoss", ":.4e")
 
         for epoch in range(self.start_epoch + 1, self.num_epochs + 1):
             self.train_loader.sampler.set_epoch(epoch)
@@ -498,7 +515,7 @@ class TrainDDP:
                 self.student.eval()
                 self.student.module.ticket = True
                 meter_top1.reset()
-                meter_val_loss.reset()  # Reset validation loss meter
+                meter_val_loss.reset()
                 with torch.no_grad():
                     with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
                         _tqdm.set_description("Validation epoch: {}/{}".format(epoch, self.num_epochs))
@@ -507,9 +524,11 @@ class TrainDDP:
                             targets = targets.cuda().float()
                             logits_student, _ = self.student(images)
                             logits_student = logits_student.squeeze(1)
+                            logits_teacher, _ = self.teacher(images)
+                            logits_teacher = logits_teacher.squeeze(1)
 
-                            # Compute validation loss
-                            val_loss = self.ori_loss(logits_student, targets)
+                            # محاسبه val_loss با استفاده از CombinedLoss
+                            val_loss = self.combined_loss(logits_student, targets, logits_teacher)
                             meter_val_loss.update(val_loss.item(), images.size(0))
 
                             preds = (torch.sigmoid(logits_student) > 0.5).float()
@@ -527,7 +546,7 @@ class TrainDDP:
 
                 Flops = self.student.module.get_flops()
                 self.writer.add_scalar("val/acc/top1", meter_top1.avg, global_step=epoch)
-                self.writer.add_scalar("val/loss/ori_loss", meter_val_loss.avg, global_step=epoch)  # Log validation loss
+                self.writer.add_scalar("val/loss/val_loss", meter_val_loss.avg, global_step=epoch)
                 self.writer.add_scalar("val/Flops", Flops, global_step=epoch)
 
                 self.logger.info(
@@ -564,41 +583,6 @@ class TrainDDP:
         if self.rank == 0:
             self.logger.info("Train finished!")
 
-    def test(self):
-        if self.rank == 0:
-            self.student.eval()
-            self.student.module.ticket = True
-            meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
-
-            with torch.no_grad():
-                with tqdm(total=len(self.test_loader), ncols=100) as _tqdm:
-                    _tqdm.set_description("Test")
-                    for images, targets in self.test_loader:
-                        images = images.cuda()
-                        targets = targets.cuda().float()
-                        logits_student, _ = self.student(images)
-                        logits_student = logits_student.squeeze(1)
-
-                        preds = (torch.sigmoid(logits_student) > 0.5).float()
-                        correct = (preds == targets).sum().item()
-                        prec1 = 100. * correct / images.size(0)
-                        n = images.size(0)
-                        meter_top1.update(prec1, n)
-
-                        _tqdm.set_postfix(test_acc="{:.4f}".format(meter_top1.avg))
-                        _tqdm.update(1)
-                        time.sleep(0.01)
-
-            Flops = self.student.module.get_flops()
-            self.logger.info(
-                "[Test] Test_Acc {test_acc:.2f}".format(test_acc=meter_top1.avg)
-            )
-            self.logger.info(
-                "[Test model Flops] : " + str(Flops.item() / (10**6)) + "M"
-            )
-            self.writer.add_scalar("test/acc/top1", meter_top1.avg, global_step=0)
-            self.writer.add_scalar("test/Flops", Flops, global_step=0)
-
     def main(self):
         self.dist_init()
         self.result_init()
@@ -608,4 +592,3 @@ class TrainDDP:
         self.define_loss()
         self.define_optim()
         self.train()
-        #self.test()
