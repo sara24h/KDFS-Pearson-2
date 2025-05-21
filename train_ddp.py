@@ -1,20 +1,33 @@
-import os
 import json
+import os
 import random
+import time
+from datetime import datetime
 import numpy as np
 import torch
-import torch.distributed as dist
 import torch.nn as nn
-from tqdm import tqdm
-import utils
-from torch.utils.tensorboard import SummaryWriter
-from dataset import Dataset_selector
-from model import ResNet_50_hardfakevsreal, ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k
+import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
-import loss
-import meter
-import scheduler
-from flops import Flops_baselines
+from torch.utils.tensorboard import SummaryWriter
+from tqdm import tqdm
+from torch.cuda.amp import autocast, GradScaler
+from data.dataset import Dataset_selector
+from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k
+from utils import utils, loss, meter, scheduler
+from thop import profile
+from model.teacher.ResNet import ResNet_50_hardfakevsreal
+from torch import amp
+
+os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+
+Flops_baselines = {
+    "ResNet_50": {
+        "hardfakevsrealfaces": 7700.0,
+        "rvf10k": 5000.0,
+        "140k": 5390.0,
+    }
+}
+
 
 class TrainDDP:
     def __init__(self, args):
