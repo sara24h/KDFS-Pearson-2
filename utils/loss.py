@@ -7,11 +7,10 @@ class KDLoss(nn.Module):
         super(KDLoss, self).__init__()
 
     def forward(self, logits_t, logits_s):
-        # افزودن بعد اضافی در صورت تک‌بعدی بودن
         if logits_t.dim() == 1:
-            logits_t = logits_t.unsqueeze(1)  # تبدیل به [batch_size, 1]
+            logits_t = logits_t.unsqueeze(1)
         if logits_s.dim() == 1:
-            logits_s = logits_s.unsqueeze(1)  # تبدیل به [batch_size, 1]
+            logits_s = logits_s.unsqueeze(1)
         
         p_t = torch.sigmoid(logits_t)  # شکل: [batch_size, 1]
         p_s = torch.sigmoid(logits_s)  # شکل: [batch_size, 1]
@@ -19,11 +18,16 @@ class KDLoss(nn.Module):
         dist_t = torch.cat([1 - p_t, p_t], dim=1)  # شکل: [batch_size, 2]
         dist_s = torch.cat([1 - p_s, p_s], dim=1)  # شکل: [batch_size, 2]
         
+        # نرمال‌سازی dist_t برای اطمینان از توزیع احتمال
+        dist_t = dist_t / dist_t.sum(dim=1, keepdim=True)
+        
         return F.kl_div(
             F.log_softmax(dist_s, dim=1),
             dist_t,
             reduction="batchmean",
         )
+
+
 class RCLoss(nn.Module):
     def __init__(self):
         super(RCLoss, self).__init__()
