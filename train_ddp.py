@@ -331,6 +331,7 @@ class TrainDDP:
         rt /= self.world_size
         return rt
 
+
     def train(self):
         if self.rank == 0:
             self.logger.info(f"Starting training from epoch: {self.start_epoch + 1}")
@@ -349,7 +350,7 @@ class TrainDDP:
             meter_maskloss = meter.AverageMeter("MaskLoss", ":.6e")
             meter_loss = meter.AverageMeter("Loss", ":.4e")
             meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
-            meter_val_loss = meter.AverageMeter("ValLoss", ":.4e")  # Added validation loss meter
+            meter_val_loss = meter.AverageMeter("ValLoss", ":.4e")
 
         for epoch in range(self.start_epoch + 1, self.num_epochs + 1):
             self.train_loader.sampler.set_epoch(epoch)
@@ -394,11 +395,22 @@ class TrainDDP:
                                 feature_list_student[i], feature_list_teacher[i]
                             )
 
-                        Flops_baseline = Flops_baselines[self.arch][self.args.dataset_type]
-                        Flops = self.student.module.get_flops()
-                        mask_loss = self.mask_loss(
-                            Flops, Flops_baseline * (10**6), self.compress_rate
-                        )
+                        # محاسبه زیان ماسک جدید با استفاده از compute_active_filters_correlation
+                        mask_loss = torch.tensor(0.0, device=images.device)
+                        for name, module in self.student.module.named_modules():
+                            if isinstance(module, nn.Conv2d):
+                                filters = module.weight  # شکل: (out_channels, in_channels, h, w)
+                                # پیدا کردن ماسک متناظر
+                                for mask_module in self.student.module.mask_modules:
+                                    if hasattr(mask_module, 'mask') and mask_module.mask.shape[0] == filters.shape[0]:
+                                        m = mask_module.mask  # بردار ماسک
+                                        mask_loss += loss.compute_active_filters_correlation(filters, m)
+                                        break
+
+                        # نرمال‌سازی زیان ماسک (اختیاری، بر اساس تعداد لایه‌ها)
+                        num_conv_layers = sum(1 for _, m in self.student.module.named_modules() if isinstance(m, nn.Conv2d))
+                        if num_conv_layers > 0:
+                            mask_loss = mask_loss / num_conv_layers
 
                         total_loss = (
                             ori_loss
