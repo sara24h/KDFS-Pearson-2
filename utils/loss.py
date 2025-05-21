@@ -2,53 +2,43 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
 class KDLoss(nn.Module):
-    def __init__(self):
+    def __init__(self, temperature=1.0):  # دمای پیش‌فرض 1 برای حداقل اثر
         super(KDLoss, self).__init__()
+        self.temperature = temperature
 
     def forward(self, logits_t, logits_s):
-        # اطمینان از اینکه ابعاد مناسب باشند
         if logits_t.dim() == 1:
             logits_t = logits_t.unsqueeze(1)
         if logits_s.dim() == 1:
             logits_s = logits_s.unsqueeze(1)
 
-        # تبدیل logits به احتمال با استفاده از sigmoid
-        p_t = torch.sigmoid(logits_t)  # [batch_size, 1]
-        p_s = torch.sigmoid(logits_s)  # [batch_size, 1]
+        p_t = torch.sigmoid(logits_t / self.temperature)
+        p_s = torch.sigmoid(logits_s / self.temperature)
 
-        # ساخت توزیع‌های باینری دوکلاسه
-        dist_t = torch.cat([1 - p_t, p_t], dim=1)  # [batch_size, 2]
-        dist_s = torch.cat([1 - p_s, p_s], dim=1)  # [batch_size, 2]
+        dist_t = torch.cat([1 - p_t, p_t], dim=1)
+        dist_s = torch.cat([1 - p_s, p_s], dim=1)
 
-        # محاسبه KL-Divergence بین توزیع‌ها
         return F.kl_div(
-            F.log_softmax(dist_s, dim=1),  # log(prob_s)
-            dist_t,                        # prob_t
+            torch.log(dist_s + 1e-10),
+            dist_t,
             reduction="batchmean"
-        )
+        ) * (self.temperature ** 2)
 
 class CombinedLoss(nn.Module):
-    def __init__(self, alpha=0.5):
+    def __init__(self, alpha=0.01, kd_scale=100.0):  # alpha کوچک‌تر
         super(CombinedLoss, self).__init__()
         self.bce_loss = nn.BCEWithLogitsLoss()
-        self.kd_loss = KDLoss()
-        self.alpha = alpha  # وزن برای ترکیب دو خطا
+        self.kd_loss = KDLoss(temperature=1.0)  # دمای کم
+        self.alpha = alpha
+        self.kd_scale = kd_scale
 
-    def forward(self, outputs, targets, logits_t=None):
-        # محاسبه BCE loss
+    def forward(self, outputs, targets, logits_t=None, use_kd=True):
         bce = self.bce_loss(outputs, targets.float())
-        
-        # اگر logits معلم ارائه شده باشد، KDLoss را محاسبه کن
-        if logits_t is not None:
-            kd = self.kd_loss(logits_t, outputs)
+        if logits_t is not None and use_kd:
+            kd = self.kd_loss(logits_t, outputs) / self.kd_scale
             return self.alpha * kd + (1 - self.alpha) * bce
         return bce
-
 
 class RCLoss(nn.Module):
     def __init__(self):
