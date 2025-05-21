@@ -1,32 +1,20 @@
-import json
 import os
+import json
 import random
-import time
-from datetime import datetime
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.distributed as dist
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.tensorboard import SummaryWriter
+import torch.nn as nn
 from tqdm import tqdm
-from torch.cuda.amp import autocast, GradScaler
-from data.dataset import Dataset_selector
-from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k
-from utils import utils, loss, meter, scheduler
-from thop import profile
-from model.teacher.ResNet import ResNet_50_hardfakevsreal
-from torch import amp
-
-os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-
-Flops_baselines = {
-    "ResNet_50": {
-        "hardfakevsrealfaces": 7700.0,
-        "rvf10k": 5000.0,
-        "140k": 5390.0,
-    }
-}
+import utils
+from torch.utils.tensorboard import SummaryWriter
+from dataset import Dataset_selector
+from model import ResNet_50_hardfakevsreal, ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k
+from torch.nn.parallel import DistributedDataParallel as DDP
+import loss
+import meter
+import scheduler
+from flops import Flops_baselines
 
 class TrainDDP:
     def __init__(self, args):
@@ -239,10 +227,10 @@ class TrainDDP:
 
     def define_loss(self):
         self.ori_loss = nn.BCEWithLogitsLoss().cuda()
-        self.kd_loss = loss.KDLoss().cuda()
+        self.kd_loss = loss.KDLoss(temperature=1.0).cuda()
         self.rc_loss = loss.RCLoss().cuda()
         self.mask_loss = loss.MaskLoss().cuda()
-        self.combined_loss = loss.CombinedLoss(alpha=self.coef_kdloss).cuda() 
+        self.combined_loss = loss.CombinedLoss(alpha=0.01, kd_scale=100.0).cuda()
 
     def define_optim(self):
         weight_params = map(
@@ -351,6 +339,8 @@ class TrainDDP:
             meter_loss = meter.AverageMeter("Loss", ":.4e")
             meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
             meter_val_loss = meter.AverageMeter("ValLoss", ":.4e")
+            meter_bce_loss = meter.AverageMeter("BCELoss", ":.4e")  # اضافه شده
+            meter_kd_loss = meter.AverageMeter("KDLoss", ":.4e")    # اضافه شده
 
         for epoch in range(self.start_epoch + 1, self.num_epochs + 1):
             self.train_loader.sampler.set_epoch(epoch)
@@ -499,6 +489,8 @@ class TrainDDP:
                 self.student.module.ticket = True
                 meter_top1.reset()
                 meter_val_loss.reset()
+                meter_bce_loss = meter.AverageMeter("BCELoss", ":.4e")  # اضافه شده
+                meter_kd_loss = meter.AverageMeter("KDLoss", ":.4e")    # اضافه شده
                 with torch.no_grad():
                     with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
                         _tqdm.set_description("Validation epoch: {}/{}".format(epoch, self.num_epochs))
@@ -510,34 +502,46 @@ class TrainDDP:
                             logits_teacher, _ = self.teacher(images)
                             logits_teacher = logits_teacher.squeeze(1)
 
-                            val_loss = self.combined_loss(logits_student, targets, logits_teacher)
+                            # محاسبه جداگانه
+                            bce_loss = self.ori_loss(logits_student, targets)
+                            kd_loss = self.kd_loss(logits_teacher, logits_student) / self.combined_loss.kd_scale
+                            val_loss = self.combined_loss(logits_student, targets, logits_teacher, use_kd=True)
+
                             meter_val_loss.update(val_loss.item(), images.size(0))
+                            meter_bce_loss.update(bce_loss.item(), images.size(0))
+                            meter_kd_loss.update(self.combined_loss.alpha * kd_loss.item(), images.size(0))
 
                             preds = (torch.sigmoid(logits_student) > 0.5).float()
                             correct = (preds == targets).sum().item()
                             prec1 = 100. * correct / images.size(0)
-                            n = images.size(0)
-                            meter_top1.update(prec1, n)
+                            meter_top1.update(prec1, images.size(0))
 
                             _tqdm.set_postfix(
                                 val_acc="{:.4f}".format(meter_top1.avg),
-                                val_loss="{:.4f}".format(meter_val_loss.avg)
+                                val_loss="{:.4f}".format(meter_val_loss.avg),
+                                bce_loss="{:.4f}".format(meter_bce_loss.avg),
+                                kd_loss="{:.4f}".format(meter_kd_loss.avg)
                             )
                             _tqdm.update(1)
                             time.sleep(0.01)
 
                 Flops = self.student.module.get_flops()
-                self.writer.add_scalar("val/acc/top1", meter_top1.avg, global_step=epoch)
                 self.writer.add_scalar("val/loss/val_loss", meter_val_loss.avg, global_step=epoch)
+                self.writer.add_scalar("val/loss/bce_loss", meter_bce_loss.avg, global_step=epoch)
+                self.writer.add_scalar("val/loss/kd_loss", meter_kd_loss.avg, global_step=epoch)
+                self.writer.add_scalar("val/acc/top1", meter_top1.avg, global_step=epoch)
                 self.writer.add_scalar("val/Flops", Flops, global_step=epoch)
 
                 self.logger.info(
                     "[Val] "
                     "Epoch {0} : "
-                    "Val_Acc {val_acc:.2f}, Val_Loss {val_loss:.4f}".format(
+                    "Val_Acc {val_acc:.2f}, Val_Loss {val_loss:.4f}, "
+                    "BCELoss {bce_loss:.4f}, KDLoss {kd_loss:.4f}".format(
                         epoch,
                         val_acc=meter_top1.avg,
-                        val_loss=meter_val_loss.avg
+                        val_loss=meter_val_loss.avg,
+                        bce_loss=meter_bce_loss.avg,
+                        kd_loss=meter_kd_loss.avg
                     )
                 )
 
