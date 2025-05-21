@@ -3,25 +3,24 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class KDLoss(nn.Module):
-    def __init__(self, temperature=3.0):
+    def __init__(self):
         super(KDLoss, self).__init__()
-        self.temperature = temperature
 
     def forward(self, logits_t, logits_s):
-        logits_t = logits_t.squeeze(-1) if logits_t.dim() > 1 else logits_t
-        logits_s = logits_s.squeeze(-1) if logits_s.dim() > 1 else logits_s
-
-        # نرمال‌سازی لوجیت‌ها
-        logits_t = logits_t / (torch.abs(logits_t).max() + 1e-6)
-        logits_s = logits_s / (torch.abs(logits_s).max() + 1e-6)
-
-        prob_t = torch.sigmoid(logits_t / self.temperature)
-        prob_s = torch.sigmoid(logits_s / self.temperature)
-        prob_t_2d = torch.stack([1 - prob_t, prob_t], dim=-1)
-        prob_s_2d = torch.stack([1 - prob_s, prob_s], dim=-1)
-        log_prob_s_2d = torch.log(prob_s_2d + 1e-6)  # افزایش به 1e-6
-
-        return F.kl_div(log_prob_s_2d, prob_t_2d, reduction='batchmean') * (self.temperature ** 2)
+        # اعمال sigmoid برای به دست آوردن احتمالات
+        p_t = torch.sigmoid(logits_t)  # شکل: [batch_size, 1]
+        p_s = torch.sigmoid(logits_s)  # شکل: [batch_size, 1]
+        
+        # ساخت توزیع باینری: [1-p, p]
+        dist_t = torch.cat([1 - p_t, p_t], dim=1)  # شکل: [batch_size, 2]
+        dist_s = torch.cat([1 - p_s, p_s], dim=1)  # شکل: [batch_size, 2]
+        
+        # محاسبه KL divergence
+        return F.kl_div(
+            F.log_softmax(dist_s, dim=1),
+            dist_t,
+            reduction="batchmean",
+        )
 
 class RCLoss(nn.Module):
     def __init__(self):
