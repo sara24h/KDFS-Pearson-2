@@ -39,6 +39,13 @@ def compute_active_filters_correlation(filters, m):
     
     return sum_of_squares
 
+class MaskLoss(nn.Module):
+    def __init__(self):
+        super(MaskLoss, self).__init__()
+
+    def forward(self, filters, mask):
+        return compute_active_filters_correlation(filters, mask)
+
 class CrossEntropyLabelSmooth(nn.Module):
     def __init__(self, num_classes, epsilon):
         super(CrossEntropyLabelSmooth, self).__init__()
