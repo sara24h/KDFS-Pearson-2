@@ -423,8 +423,8 @@ class TrainDDP:
 
 
                     grad_norm = sum(p.grad.norm().item() for p in self.student.parameters() if p.grad is not None)
-                        if self.rank == 0:
-                            self.logger.info(f"Gradient Norm: {grad_norm:.4f}")
+                    if self.rank == 0:
+                        self.logger.info(f"Gradient Norm: {grad_norm:.4f}")
                     
                     scaler.step(self.optim_weight)
                     scaler.step(self.optim_mask)
