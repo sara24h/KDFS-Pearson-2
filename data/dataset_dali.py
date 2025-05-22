@@ -1,105 +1,133 @@
 import os
-import nvidia.dali.ops as ops
+import csv
+import nvidia.dali.fn as fn
 import nvidia.dali.types as types
-import torchvision.datasets as datasets
 from nvidia.dali.pipeline import Pipeline
-import torchvision.transforms as transforms
-from nvidia.dali.plugin.pytorch import DALIClassificationIterator, DALIGenericIterator
+from nvidia.dali.plugin.pytorch import DALIGenericIterator
+from sklearn.model_selection import train_test_split
+import random
+from collections import Counter
 
-
-class HybridTrainPipeline_imagenet(Pipeline):
+class HybridTrainPipeline_140k(Pipeline):
     def __init__(
         self,
-        data_dir,
+        data_list,  # List of (img_path, label) tuples
+        root_dir,
         batch_size,
         num_threads,
         device_id=0,
         local_rank=0,
         world_size=1,
     ):
-        # As we're recreating the Pipeline at every epoch, the seed must be -1 (random seed)
         super().__init__(batch_size, num_threads, device_id, seed=-1)
-        dali_device = "gpu"
-        self.input = ops.readers.File(
-            file_root=data_dir,
+        self.data_list = data_list
+        self.root_dir = root_dir
+        self.input = fn.readers.file(
+            files=[os.path.join(root_dir, img_path) for img_path, _ in data_list],
+            labels=[int(label in ['real', 'Real', 1]) for _, label in data_list],
             shard_id=local_rank,
             num_shards=world_size,
             random_shuffle=True,
         )
-        self.decode = ops.decoders.Image(device="mixed", output_type=types.RGB)
-        self.res = ops.RandomResizedCrop(
-            device="gpu", size=224, random_area=[0.08, 1.25]
+        self.decode = fn.decoders.image(device="mixed", output_type=types.RGB)
+        self.res = fn.random_resized_crop(
+            device="gpu", size=256, random_area=[0.8, 1.2], random_aspect_ratio=[0.9, 1.1]
         )
-        self.cmnp = ops.CropMirrorNormalize(
+        self.cmnp = fn.crop_mirror_normalize(
             device="gpu",
             output_dtype=types.FLOAT,
             output_layout=types.NCHW,
             image_type=types.RGB,
-            mean=[0.485 * 255, 0.456 * 255, 0.406 * 255],
-            std=[0.229 * 255, 0.224 * 255, 0.225 * 255],
+            mean=[0.5207 * 255, 0.4258 * 255, 0.3806 * 255],
+            std=[0.2490 * 255, 0.2239 * 255, 0.2212 * 255],
         )
-        self.coin = ops.random.CoinFlip(probability=0.5)
-        print('DALI "{0}" variant'.format(dali_device))
+        self.coin = fn.random.coin_flip(probability=0.5)
 
     def define_graph(self):
         rng = self.coin()
-        self.jpegs, self.labels = self.input(name="Reader")
-        images = self.decode(self.jpegs)
+        images, labels = self.input
+        images = self.decode(images)
         images = self.res(images)
         output = self.cmnp(images, mirror=rng)
-        return [output, self.labels]
+        return [output, labels.gpu()]
 
-
-class HybridValPipeline_imagenet(Pipeline):
+class HybridValPipeline_140k(Pipeline):
     def __init__(
         self,
-        data_dir,
+        data_list,  # List of (img_path, label) tuples
+        root_dir,
         batch_size,
         num_threads,
         device_id=0,
     ):
         super().__init__(batch_size, num_threads, device_id, seed=-1)
-        self.input = ops.readers.File(
-            file_root=data_dir,
+        self.data_list = data_list
+        self.root_dir = root_dir
+        self.input = fn.readers.file(
+            files=[os.path.join(root_dir, img_path) for img_path, _ in data_list],
+            labels=[int(label in ['real', 'Real', 1]) for _, label in data_list],
             random_shuffle=False,
         )
-        self.decode = ops.decoders.Image(device="mixed", output_type=types.RGB)
-        self.res = ops.Resize(
-            device="gpu", resize_shorter=256, interp_type=types.INTERP_TRIANGULAR
+        self.decode = fn.decoders.image(device="mixed", output_type=types.RGB)
+        self.res = fn.resize(
+            device="gpu", resize_x=256, resize_y=256, interp_type=types.INTERP_TRIANGULAR
         )
-        self.cmnp = ops.CropMirrorNormalize(
+        self.cmnp = fn.crop_mirror_normalize(
             device="gpu",
             output_dtype=types.FLOAT,
             output_layout=types.NCHW,
-            crop=(224, 224),
             image_type=types.RGB,
-            mean=[0.485 * 255, 0.456 * 255, 0.406 * 255],
-            std=[0.229 * 255, 0.224 * 255, 0.225 * 255],
+            mean=[0.5207 * 255, 0.4258 * 255, 0.3806 * 255],
+            std=[0.2490 * 255, 0.2239 * 255, 0.2212 * 255],
         )
 
     def define_graph(self):
-        self.jpegs, self.labels = self.input(name="Reader")
-        images = self.decode(self.jpegs)
+        images, labels = self.input
+        images = self.decode(images)
         images = self.res(images)
         output = self.cmnp(images)
-        return [output, self.labels]
+        return [output, labels.gpu()]
 
-
-class Dataset_imagenet_dali:
+class Dataset_140k_dali:
     def __init__(
         self,
         dataset_dir,
         train_batch_size,
         eval_batch_size,
-        num_threads=8,
+        num_threads=4,
         device_id=0,
         local_rank=0,
         world_size=1,
     ):
-        train_dir = os.path.join(dataset_dir, "train")
-        test_dir = os.path.join(dataset_dir, "val")
-        pipeline_train = HybridTrainPipeline_imagenet(
-            data_dir=train_dir,
+        # Read CSV files
+        def read_csv_file(csv_file, path_column='path', label_column='label'):
+            data = []
+            with open(csv_file, 'r') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    data.append((row[path_column], row[label_column]))
+            return data
+
+        train_csv = os.path.join(dataset_dir, 'train.csv')
+        valid_csv = os.path.join(dataset_dir, 'valid.csv')
+        test_csv = os.path.join(dataset_dir, 'test.csv')
+        root_dir = os.path.join(dataset_dir, 'real_vs_fake', 'real-vs-fake')
+
+        train_data = read_csv_file(train_csv)
+        val_data = read_csv_file(valid_csv)
+        test_data = read_csv_file(test_csv)
+
+        # Debug: Print data statistics
+        print("140k dataset statistics:")
+        print(f"Total train dataset size: {len(train_data)}")
+        print(f"Train label distribution: {Counter([x[1] for x in train_data])}")
+        print(f"Total validation dataset size: {len(val_data)}")
+        print(f"Total test dataset size: {len(test_data)}")
+
+        # Create pipelines
+        pipeline_train = HybridTrainPipeline_140k(
+            data_list=train_data,
+            root_dir=root_dir,
             batch_size=train_batch_size,
             num_threads=num_threads,
             device_id=device_id,
@@ -107,21 +135,39 @@ class Dataset_imagenet_dali:
             world_size=world_size,
         )
         pipeline_train.build()
-        self.loader_train = DALIClassificationIterator(
-            pipelines=pipeline_train,
-            size=pipeline_train.epoch_size("Reader") // world_size,
+        self.loader_train = DALIGenericIterator(
+            pipeline_train,
+            ["data", "label"],
+            size=len(train_data) // world_size,
             auto_reset=True,
         )
 
-        pipeline_test = HybridValPipeline_imagenet(
-            data_dir=test_dir,
+        pipeline_val = HybridValPipeline_140k(
+            data_list=val_data,
+            root_dir=root_dir,
+            batch_size=eval_batch_size,
+            num_threads=num_threads,
+            device_id=device_id,
+        )
+        pipeline_val.build()
+        self.loader_val = DALIGenericIterator(
+            pipeline_val,
+            ["data", "label"],
+            size=len(val_data),
+            auto_reset=True,
+        )
+
+        pipeline_test = HybridValPipeline_140k(
+            data_list=test_data,
+            root_dir=root_dir,
             batch_size=eval_batch_size,
             num_threads=num_threads,
             device_id=device_id,
         )
         pipeline_test.build()
-        self.loader_test = DALIClassificationIterator(
-            pipelines=pipeline_test,
-            size=pipeline_test.epoch_size("Reader"),
+        self.loader_test = DALIGenericIterator(
+            pipeline_test,
+            ["data", "label"],
+            size=len(test_data),
             auto_reset=True,
         )
