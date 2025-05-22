@@ -18,6 +18,7 @@ from thop import profile
 from model.teacher.ResNet import ResNet_50_hardfakevsreal
 from torch.amp import autocast, GradScaler
 
+
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 
 Flops_baselines = {
@@ -332,6 +333,7 @@ class TrainDDP:
         rt /= self.world_size
         return rt
 
+
     def train(self):
         if self.rank == 0:
             self.logger.info(f"Starting training from epoch: {self.start_epoch + 1}")
@@ -400,21 +402,19 @@ class TrainDDP:
                                 feature_list_student[i], feature_list_teacher[i]
                             )
 
+                        
                         mask_loss = torch.tensor(0.0, device=images.device)
-                        layer_mask_losses = []  # لیست برای ذخیره mask_loss هر لایه
-                        active_filters_per_layer = []  # لیست برای ذخیره تعداد فیلترهای فعال
                         for name, module in self.student.module.named_modules():
                             if isinstance(module, nn.Conv2d):
-                                filters = module.weight
+                                filters = module.weight  # شکل: (out_channels, in_channels, h, w)
+                                # پیدا کردن ماسک متناظر
                                 for mask_module in self.student.module.mask_modules:
                                     if hasattr(mask_module, 'mask') and mask_module.mask.shape[0] == filters.shape[0]:
-                                        m = mask_module.mask
-                                        layer_loss = loss.compute_active_filters_correlation(filters, m)
-                                        layer_mask_losses.append((name, layer_loss.item()))
-                                        active_filters_per_layer.append((name, m.sum().item(), m.numel()))
-                                        mask_loss += layer_loss
+                                        m = mask_module.mask 
+                                        mask_loss += loss.compute_active_filters_correlation(filters, m)
                                         break
 
+                   
                         num_conv_layers = sum(1 for _, m in self.student.module.named_modules() if isinstance(m, nn.Conv2d))
                         if num_conv_layers > 0:
                             mask_loss = mask_loss / num_conv_layers
@@ -454,21 +454,9 @@ class TrainDDP:
                         meter_loss.update(reduced_total_loss.item(), n)
                         meter_top1.update(reduced_prec1.item(), n)
 
-                        # لاگ کردن mask_loss برای هر لایه
-                        for layer_name, layer_loss in layer_mask_losses:
-                            self.writer.add_scalar(f"train/loss/mask_loss_{layer_name}", layer_loss, global_step=epoch)
-                            if layer_loss > 10.0:  # آستانه برای شناسایی مقادیر غیرعادی
-                                self.logger.warning(f"High mask_loss in layer {layer_name}: {layer_loss:.6f}")
-
-                        # لاگ کردن تعداد فیلترهای فعال
-                        for layer_name, active_count, total_count in active_filters_per_layer:
-                            self.writer.add_scalar(f"train/active_filters_{layer_name}", active_count, global_step=epoch)
-                            self.logger.info(f"Layer {layer_name}: {active_count}/{total_count} active filters")
-
                         _tqdm.set_postfix(
                             loss="{:.4f}".format(meter_loss.avg),
                             train_acc="{:.4f}".format(meter_top1.avg),
-                            mask_loss="{:.6f}".format(meter_maskloss.avg)
                         )
                         _tqdm.update(1)
 
@@ -528,7 +516,7 @@ class TrainDDP:
                 self.student.eval()
                 self.student.module.ticket = True
                 meter_top1.reset()
-                meter_val_loss.reset()
+                meter_val_loss.reset()  # Reset validation loss meter
                 with torch.no_grad():
                     with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
                         _tqdm.set_description("Validation epoch: {}/{}".format(epoch, self.num_epochs))
@@ -538,6 +526,7 @@ class TrainDDP:
                             logits_student, _ = self.student(images)
                             logits_student = logits_student.squeeze(1)
 
+                            # Compute validation loss
                             val_loss = self.ori_loss(logits_student, targets)
                             meter_val_loss.update(val_loss.item(), images.size(0))
 
@@ -556,7 +545,7 @@ class TrainDDP:
 
                 Flops = self.student.module.get_flops()
                 self.writer.add_scalar("val/acc/top1", meter_top1.avg, global_step=epoch)
-                self.writer.add_scalar("val/loss/ori_loss", meter_val_loss.avg, global_step=epoch)
+                self.writer.add_scalar("val/loss/ori_loss", meter_val_loss.avg, global_step=epoch)  # Log validation loss
                 self.writer.add_scalar("val/Flops", Flops, global_step=epoch)
 
                 self.logger.info(
