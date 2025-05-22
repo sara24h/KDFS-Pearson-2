@@ -25,7 +25,7 @@ Flops_baselines = {
     "ResNet_50": {
         "hardfakevsrealfaces": 7700.0,
         "rvf10k": 5000.0,
-        "140k": 5000.0,
+        "140k": 5390.0,
     }
 }
 
@@ -427,12 +427,6 @@ class TrainDDP:
                         )
 
                     scaler.scale(total_loss).backward()
-
-
-                    grad_norm = sum(p.grad.norm().item() for p in self.student.parameters() if p.grad is not None)
-                    if self.rank == 0:
-                        self.logger.info(f"Gradient Norm: {grad_norm:.4f}")
-                    
                     scaler.step(self.optim_weight)
                     scaler.step(self.optim_mask)
                     scaler.update()
