@@ -1,89 +1,73 @@
 import csv
 import os
 import torch
-from torch.utils.data import Dataset, DataLoader
-import torchvision.transforms as transforms
-from PIL import Image
+from torch.utils.data import DataLoader
+from nvidia.dali.pipeline import Pipeline
+import nvidia.dali.fn as fn
+import nvidia.dali.types as types
+from nvidia.dali.plugin.pytorch import DALIGenericIterator
 from sklearn.model_selection import train_test_split
 import random
-from torchdata.datapipes.iter import IterableWrapper, FileOpener, Mapper
-import pickle
-import hashlib
+from collections import Counter
 
-class FaceDataset(Dataset):
-    def __init__(self, data, root_dir, transform=None, img_column='path', cache_dir=None, use_cache=True, cache_threshold=50000):
-        self.data = data  # List of (image_path, label) tuples
+class FaceDALIPipeline(Pipeline):
+    def __init__(self, data_list, root_dir, batch_size, num_threads, device_id, is_training, image_size, mean, std):
+        super(FaceDALIPipeline, self).__init__(batch_size, num_threads, device_id, seed=3407)
+        self.data_list = data_list  # List of (img_path, label) tuples
         self.root_dir = root_dir
-        self.transform = transform
-        self.img_column = img_column
-        self.label_map = {1: 1, 0: 0, 'real': 1, 'fake': 0, 'Real': 1, 'Fake': 0}
-        self.use_cache = use_cache
-        self.cache_dir = cache_dir
-        self.cache_threshold = cache_threshold
-        self.cache = {}  # In-memory cache
+        self.is_training = is_training
+        self.image_size = image_size
+        self.mean = mean
+        self.std = std
 
-        # Initialize cache
-        if self.use_cache and len(self.data) <= self.cache_threshold:
-            print(f"Using in-memory cache for dataset with {len(self.data)} samples")
-            self._initialize_memory_cache()
-        elif self.use_cache and cache_dir:
-            print(f"Using disk cache for dataset with {len(self.data)} samples at {cache_dir}")
-            os.makedirs(cache_dir, exist_ok=True)
+        # Define DALI pipeline
+        self.input = fn.readers.file(
+            files=[os.path.join(root_dir, img_path) for img_path, _ in data_list],
+            labels=[int(label in ['real', 'Real', 1]) for _, label in data_list],
+            shuffle=is_training,
+        )
 
-    def _initialize_memory_cache(self):
-        """Initialize in-memory cache for small datasets"""
-        for idx in range(len(self.data)):
-            img_path, _ = self.data[idx]
-            full_path = os.path.join(self.root_dir, img_path)
-            if os.path.exists(full_path):
-                image = Image.open(full_path).convert('RGB')
-                if self.transform:
-                    image = self.transform(image)
-                self.cache[idx] = image
+        # Decode images
+        self.decode = fn.decoders.image(device="mixed", output_type=types.RGB)
 
-    def _get_cache_key(self, img_path):
-        """Generate a unique cache key for an image"""
-        return hashlib.md5(img_path.encode()).hexdigest()
+        # Resize
+        self.resize = fn.resize(self.decode, resize_x=image_size[0], resize_y=image_size[1])
 
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, idx):
-        img_path, label = self.data[idx]
-        full_path = os.path.join(self.root_dir, img_path)
-
-        if not os.path.exists(full_path):
-            raise FileNotFoundError(f"Image not found: {full_path}")
-
-        # Check in-memory cache
-        if self.use_cache and idx in self.cache:
-            image = self.cache[idx]
+        # Training augmentations
+        if is_training:
+            self.augment = fn.random_resized_crop(
+                self.resize,
+                size=image_size[0],
+                random_area=[0.8, 1.2],
+                random_aspect_ratio=[0.9, 1.1]
+            )
+            self.flip = fn.flip(self.augment, horizontal=1, probability=0.5)
+            self.rotate = fn.rotate(self.flip, angle=fn.random.uniform(range=(-20, 20)), probability=0.5)
+            self.color = fn.color_twist(
+                self.rotate,
+                brightness=fn.random.uniform(range=(0.7, 1.3)),
+                contrast=fn.random.uniform(range=(0.7, 1.3)),
+                saturation=fn.random.uniform(range=(0.7, 1.3)),
+                probability=0.5
+            )
+            self.final = self.color
         else:
-            # Check disk cache
-            if self.use_cache and self.cache_dir:
-                cache_key = self._get_cache_key(full_path)
-                cache_path = os.path.join(self.cache_dir, f"{cache_key}.pkl")
-                if os.path.exists(cache_path):
-                    with open(cache_path, 'rb') as f:
-                        image = pickle.load(f)
-                else:
-                    image = Image.open(full_path).convert('RGB')
-                    if self.transform:
-                        image = self.transform(image)
-                    # Save to disk cache
-                    with open(cache_path, 'wb') as f:
-                        pickle.dump(image, f)
-            else:
-                image = Image.open(full_path).convert('RGB')
-                if self.transform:
-                    image = self.transform(image)
+            self.final = self.resize
 
-            # Store in in-memory cache if small dataset
-            if self.use_cache and len(self.data) <= self.cache_threshold:
-                self.cache[idx] = image
+        # Normalize
+        self.normalize = fn.crop_mirror_normalize(
+            self.final,
+            dtype=types.FLOAT,
+            output_layout="CHW",
+            mean=[m * 255 for m in mean],
+            std=[s * 255 for s in std]
+        )
 
-        label = self.label_map[label]
-        return image, torch.tensor(label, dtype=torch.float)
+    def define_graph(self):
+        images, labels = self.input
+        images = self.decode(images)
+        images = self.normalize
+        return images, labels.gpu()
 
 class Dataset_selector:
     def __init__(
@@ -100,20 +84,18 @@ class Dataset_selector:
         realfake140k_root_dir=None,
         train_batch_size=32,
         eval_batch_size=32,
-        num_workers=8,
-        pin_memory=True,
+        num_workers=4,
+        device_id=0,
         ddp=False,
-        cache_dir='/tmp/dataset_cache',  # Directory for disk cache
     ):
         if dataset_mode not in ['hardfake', 'rvf10k', '140k']:
             raise ValueError("dataset_mode must be 'hardfake', 'rvf10k', or '140k'")
 
         self.dataset_mode = dataset_mode
+        self.device_id = device_id
 
-        # Define image size based on dataset_mode
+        # Define image size and mean/std based on dataset_mode
         image_size = (256, 256) if dataset_mode in ['rvf10k', '140k'] else (300, 300)
-
-        # Define mean and std based on dataset_mode
         if dataset_mode == 'hardfake':
             mean = (0.5124, 0.4165, 0.3684)
             std = (0.2363, 0.2087, 0.2029)
@@ -123,24 +105,6 @@ class Dataset_selector:
         else:  # dataset_mode == '140k'
             mean = (0.5207, 0.4258, 0.3806)
             std = (0.2490, 0.2239, 0.2212)
-
-        # Split transforms into random and non-random
-        non_random_transforms = transforms.Compose([
-            transforms.Resize(image_size),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=mean, std=std),
-        ])
-
-        random_transforms = transforms.Compose([
-            transforms.RandomHorizontalFlip(p=0.5),
-            transforms.RandomCrop(image_size[0], padding=8),
-            transforms.RandomRotation(20),
-            transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
-            transforms.RandomAffine(degrees=0, translate=(0.15, 0.15), scale=(0.8, 1.2)),
-        ])
-
-        transform_train = transforms.Compose([non_random_transforms, random_transforms])
-        transform_test = non_random_transforms
 
         # Function to read CSV with csv module
         def read_csv_file(csv_file, path_column='path', label_column='label'):
@@ -201,7 +165,6 @@ class Dataset_selector:
             random.shuffle(test_data)
 
         # Debug: Print data statistics
-        from collections import Counter
         print(f"{dataset_mode} dataset statistics:")
         print(f"Sample train image paths: {[x[0] for x in train_data[:5]]}")
         print(f"Total train dataset size: {len(train_data)}")
@@ -220,65 +183,36 @@ class Dataset_selector:
                 print(f"Missing {split} images: {len(missing_images)}")
                 print(f"Sample missing {split} images: {missing_images[:5]}")
 
-        # Create datasets with caching
-        train_dataset = FaceDataset(
-            train_data, root_dir, transform=transform_train, img_column='path', 
-            cache_dir=os.path.join(cache_dir, 'train'), use_cache=True
+        # Create DALI pipelines
+        self.loader_train = self._create_dali_loader(
+            train_data, root_dir, train_batch_size, num_workers, device_id, is_training=True,
+            image_size=image_size, mean=mean, std=std
         )
-        val_dataset = FaceDataset(
-            val_data, root_dir, transform=transform_test, img_column='path', 
-            cache_dir=os.path.join(cache_dir, 'val'), use_cache=True
+        self.loader_val = self._create_dali_loader(
+            val_data, root_dir, eval_batch_size, num_workers, device_id, is_training=False,
+            image_size=image_size, mean=mean, std=std
         )
-        test_dataset = FaceDataset(
-            test_data, root_dir, transform=transform_test, img_column='path', 
-            cache_dir=os.path.join(cache_dir, 'test'), use_cache=True
+        self.loader_test = self._create_dali_loader(
+            test_data, root_dir, eval_batch_size, num_workers, device_id, is_training=False,
+            image_size=image_size, mean=mean, std=std
         )
-
-        # Create data loaders with DDP support
-        if ddp:
-            train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=True)
-            val_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset, shuffle=False)
-            test_sampler = torch.utils.data.distributed.DistributedSampler(test_dataset, shuffle=False)
-            
-            self.loader_train = DataLoader(
-                train_dataset, batch_size=train_batch_size, num_workers=num_workers,
-                pin_memory=pin_memory, sampler=train_sampler,
-            )
-            self.loader_val = DataLoader(
-                val_dataset, batch_size=eval_batch_size, num_workers=num_workers,
-                pin_memory=pin_memory, sampler=val_sampler,
-            )
-            self.loader_test = DataLoader(
-                test_dataset, batch_size=eval_batch_size, num_workers=num_workers,
-                pin_memory=pin_memory, sampler=test_sampler,
-            )
-        else:
-            self.loader_train = DataLoader(
-                train_dataset, batch_size=train_batch_size, shuffle=True,
-                num_workers=num_workers, pin_memory=pin_memory,
-            )
-            self.loader_val = DataLoader(
-                val_dataset, batch_size=eval_batch_size, shuffle=False,
-                num_workers=num_workers, pin_memory=pin_memory,
-            )
-            self.loader_test = DataLoader(
-                test_dataset, batch_size=eval_batch_size, shuffle=False,
-                num_workers=num_workers, pin_memory=pin_memory,
-            )
 
         # Debug: Print loader sizes
         print(f"Train loader batches: {len(self.loader_train)}")
         print(f"Validation loader batches: {len(self.loader_val)}")
         print(f"Test loader batches: {len(self.loader_test)}")
 
-        # Test a sample batch
-        for loader, name in [(self.loader_train, 'train'), (self.loader_val, 'validation'), (self.loader_test, 'test')]:
-            try:
-                sample = next(iter(loader))
-                print(f"Sample {name} batch image shape: {sample[0].shape}")
-                print(f"Sample {name} batch labels: {sample[1]}")
-            except Exception as e:
-                print(f"Error loading sample {name} batch: {e}")
+    def _create_dali_loader(self, data, root_dir, batch_size, num_threads, device_id, is_training, image_size, mean, std):
+        pipeline = FaceDALIPipeline(
+            data, root_dir, batch_size, num_threads, device_id, is_training, image_size, mean, std
+        )
+        return DALIGenericIterator(
+            pipeline,
+            ["data", "label"],
+            size=len(data),
+            auto_reset=True
+        )
+
 
 if __name__ == "__main__":
     # Example for hardfakevsrealfaces
