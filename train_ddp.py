@@ -16,6 +16,8 @@ from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_
 from utils import utils, loss, meter, scheduler
 from thop import profile
 from model.teacher.ResNet import ResNet_50_hardfakevsreal
+from torch.amp import autocast, GradScaler
+
 
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 
@@ -338,7 +340,7 @@ class TrainDDP:
 
         torch.cuda.empty_cache()
         self.teacher.eval()
-        scaler = GradScaler()
+        scaler = GradScaler('cuda')
 
         if self.resume:
             self.resume_student_ckpt()
@@ -378,8 +380,13 @@ class TrainDDP:
                     self.optim_mask.zero_grad()
                     images = images.cuda()
                     targets = targets.cuda().float()
-
-                    with autocast():
+                    
+                    if torch.isnan(images).any() or torch.isinf(images).any() or torch.isnan(targets).any() or torch.isinf(targets).any():
+                        if self.rank == 0:
+                            self.logger.warning("Invalid input detected (NaN or Inf)")
+                        continue
+                        
+                    with autocast(device_type='cuda'):
                         logits_student, feature_list_student = self.student(images)
                         logits_student = logits_student.squeeze(1)
                         with torch.no_grad():
@@ -395,7 +402,7 @@ class TrainDDP:
                                 feature_list_student[i], feature_list_teacher[i]
                             )
 
-                        # محاسبه زیان ماسک جدید با استفاده از compute_active_filters_correlation
+                        
                         mask_loss = torch.tensor(0.0, device=images.device)
                         for name, module in self.student.module.named_modules():
                             if isinstance(module, nn.Conv2d):
