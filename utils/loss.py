@@ -5,11 +5,15 @@ import torch.nn.functional as F
 class KDLoss(nn.Module):
     def __init__(self):
         super(KDLoss, self).__init__()
-        self.bce_loss = nn.BCEWithLogitsLoss()
 
-    def forward(self, logits_t, logits_s):
-       
-        return self.bce_loss(logits_s, torch.sigmoid(logits_t)) 
+    def forward(self, logits_teacher, logits_student, temperature):
+
+        kd_loss = F.binary_cross_entropy_with_logits(
+            logits_student / temperature,
+            torch.sigmoid(logits_teacher / temperature), 
+            reduction='mean'
+        )
+        return kd_loss
 
 
 class RCLoss(nn.Module):
