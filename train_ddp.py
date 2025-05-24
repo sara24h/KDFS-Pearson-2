@@ -394,7 +394,12 @@ class TrainDDP:
                             logits_teacher = logits_teacher.squeeze(1)
 
                         ori_loss = self.ori_loss(logits_student, targets)
-                        kd_loss = self.kd_loss(logits_teacher, logits_student)
+                        
+                         kd_loss = (self.target_temperature**2) * self.kd_loss(
+                            logits_teacher,
+                            logits_student,
+                            self.target_temperature
+                        )
 
                         rc_loss = torch.tensor(0, device=images.device)
                         for i in range(len(feature_list_student)):
@@ -406,8 +411,8 @@ class TrainDDP:
                         mask_loss = torch.tensor(0.0, device=images.device)
                         for name, module in self.student.module.named_modules():
                             if isinstance(module, nn.Conv2d):
-                                filters = module.weight  # شکل: (out_channels, in_channels, h, w)
-                                # پیدا کردن ماسک متناظر
+                                filters = module.weight 
+                            
                                 for mask_module in self.student.module.mask_modules:
                                     if hasattr(mask_module, 'mask') and mask_module.mask.shape[0] == filters.shape[0]:
                                         m = mask_module.mask 
