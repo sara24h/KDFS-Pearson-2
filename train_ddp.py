@@ -395,7 +395,7 @@ class TrainDDP:
 
                         ori_loss = self.ori_loss(logits_student, targets)
                         
-                         kd_loss = (self.target_temperature**2) * self.kd_loss(
+                        kd_loss = (self.target_temperature**2) * self.kd_loss(
                             logits_teacher,
                             logits_student,
                             self.target_temperature
