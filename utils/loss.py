@@ -40,7 +40,7 @@ def compute_active_filters_correlation(filters, m):
     
     sum_of_squares = torch.sum(torch.pow(upper_tri, 2))
     
-    return torch.sqrt(sum_of_squares) 
+    return sum_of_squares
 
 class MaskLoss(nn.Module):
     def __init__(self):
