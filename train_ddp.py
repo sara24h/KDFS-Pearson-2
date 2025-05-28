@@ -399,7 +399,7 @@ class TrainDDP:
                             self.target_temperature
                         )
 
-                        rc_loss = torch.tensor(0, device=images.device)
+                        rc_loss = torch.tensor(0.0, device=images.device, dtype=torch.float32)
                         for i in range(len(feature_list_student)):
                             rc_loss = rc_loss + self.rc_loss(
                                 feature_list_student[i], feature_list_teacher[i]
@@ -555,7 +555,7 @@ class TrainDDP:
                                     self.target_temperature
                                 )
 
-                                rc_loss = torch.tensor(0, device=images.device)
+                                rc_loss = torch.tensor(0.0, device=images.device, dtype=torch.float32)
                                 for i in range(len(feature_list_student)):
                                     rc_loss += self.rc_loss(
                                         feature_list_student[i], feature_list_teacher[i]
