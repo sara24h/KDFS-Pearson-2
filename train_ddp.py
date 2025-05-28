@@ -145,7 +145,7 @@ class TrainDDP:
             rvf10k_valid_csv = None
             rvf10k_root_dir = None
             realfake140k_train_csv = os.path.join(self.dataset_dir, 'train.csv')
-            realfake140k_valid_csv = os.path.join(self.dataset_dir, 'valid_csv')
+            realfake140k_valid_csv = os.path.join(self.dataset_dir, 'valid.csv')
             realfake140k_test_csv = os.path.join(self.dataset_dir, 'test.csv')
             realfake140k_root_dir = self.dataset_dir
 
@@ -349,7 +349,6 @@ class TrainDDP:
             meter_maskloss = meter.AverageMeter("MaskLoss", ":.6e")
             meter_loss = meter.AverageMeter("Loss", ":.4e")
             meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
-            meter_val_loss = meter.AverageMeter("ValLoss", ":.4e")
 
         for epoch in range(self.start_epoch + 1, self.num_epochs + 1):
             self.train_loader.sampler.set_epoch(epoch)
@@ -404,8 +403,6 @@ class TrainDDP:
                                 feature_list_student[i], feature_list_teacher[i]
                             )
 
-               
-
                         from model.student.ResNet_sparse import SoftMaskedConv2d
 
                         mask_loss = torch.tensor(0.0, device=images.device, dtype=torch.float32)
@@ -414,12 +411,12 @@ class TrainDDP:
                             self.logger.info(f"Total mask modules: {len(self.student.module.mask_modules)}")
 
                         for name, module in self.student.module.named_modules():
-                            if isinstance(module, SoftMaskedConv2d): 
+                            if isinstance(module, SoftMaskedConv2d):
                                 filters = module.weight
                                 found = False
                                 adjusted_name = name.lstrip("module.")
                                 for mask_module in self.student.module.mask_modules:
-                                    if mask_module.mask.shape[0] == filters.shape[0] and mask_module.layer_name == adjusted_name :
+                                    if mask_module.mask.shape[0] == filters.shape[0] and mask_module.layer_name == adjusted_name:
                                         m = mask_module.mask
                                         correlation, active_indices = self.mask_loss(filters, m, is_training=True)
                                         if self.rank == 0:
@@ -438,8 +435,6 @@ class TrainDDP:
                             total_conv_layers = sum(1 for _, m in self.student.module.named_modules() if isinstance(m, (nn.Conv2d, SoftMaskedConv2d)))
                             self.logger.info(f"Total Conv2d and SoftMaskedConv2d layers: {total_conv_layers}, Matched layers: {matched_layers}")
 
-                        
-                       
                         total_loss = (
                             ori_loss
                             + self.coef_kdloss * kd_loss
@@ -561,13 +556,11 @@ class TrainDDP:
                                 logits_teacher = logits_teacher.squeeze(1)
 
                                 ori_loss = self.ori_loss(logits_student, targets)
-
                                 kd_loss = (self.target_temperature**2) * self.kd_loss(
                                     logits_teacher,
                                     logits_student,
                                     self.target_temperature
                                 )
-
                                 rc_loss = torch.tensor(0.0, device=images.device, dtype=torch.float32)
                                 for i in range(len(feature_list_student)):
                                     rc_loss += self.rc_loss(
@@ -575,38 +568,31 @@ class TrainDDP:
                                     )
 
                                 from model.student.ResNet_sparse import SoftMaskedConv2d
-
                                 mask_loss = torch.tensor(0.0, device=images.device, dtype=torch.float32)
                                 matched_layers = 0
-                                if self.rank == 0:
-                                    self.logger.info(f"Total mask modules: {len(self.student.module.mask_modules)}")
-
                                 for name, module in self.student.module.named_modules():
-                                    if isinstance(module, SoftMaskedConv2d): 
+                                    if isinstance(module, SoftMaskedConv2d):
                                         filters = module.weight
                                         found = False
                                         adjusted_name = name.lstrip("module.")
                                         for mask_module in self.student.module.mask_modules:
                                             if mask_module.mask.shape[0] == filters.shape[0] and mask_module.layer_name == adjusted_name:
                                                 m = mask_module.mask
-                                                correlation, active_indices = self.mask_loss(filters, m, is_training=True)
-                                                if self.rank == 0:
-                                                    self.logger.info(f"Layer {name}: {len(active_indices)} active filters, indices={active_indices.tolist()}, correlation={correlation.item()}")
+                                                correlation, active_indices = self.mask_loss(filters, m, is_training=False)
+                                                self.logger.info(f"Layer {name}: {len(active_indices)} active filters, indices={active_indices.tolist()}, correlation={correlation.item()}")
                                                 mask_loss += correlation
                                                 found = True
                                                 matched_layers += 1
                                                 break
-                                        if not found and self.rank == 0:
+                                        if not found:
                                             self.logger.warning(f"No mask found for layer {name} (adjusted: {adjusted_name})")
 
-                                 if matched_layers > 0:
-                                     mask_loss = mask_loss / matched_layers
+                                if matched_layers > 0:
+                                    mask_loss = mask_loss / matched_layers
 
-                                 if self.rank == 0:
-                                     total_conv_layers = sum(1 for _, m in self.student.module.named_modules() if isinstance(m, (nn.Conv2d, SoftMaskedConv2d)))
-                                     self.logger.info(f"Total Conv2d and SoftMaskedConv2d layers: {total_conv_layers}, Matched layers: {matched_layers}")
+                                total_conv_layers = sum(1 for _, m in self.student.module.named_modules() if isinstance(m, (nn.Conv2d, SoftMaskedConv2d)))
+                                self.logger.info(f"Total Conv2d and SoftMaskedConv2d layers: {total_conv_layers}, Matched layers: {matched_layers}")
 
-                   
                                 total_val_loss = (
                                     ori_loss
                                     + self.coef_kdloss * kd_loss
