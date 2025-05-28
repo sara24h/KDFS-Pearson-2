@@ -405,7 +405,8 @@ class TrainDDP:
                                 feature_list_student[i], feature_list_teacher[i]
                             )
 
-                        mask_loss = torch.tensor(0.0, device=images.device)
+                        mask_loss = torch.tensor(0.0, device=images.device, dtype=torch.float32)
+                        matched_layers = 0
                         for name, module in self.student.module.named_modules():
                             if isinstance(module, nn.Conv2d):
                                 filters = module.weight 
@@ -418,14 +419,24 @@ class TrainDDP:
                                             self.logger.info(f"Layer {name}: {active_filters} active filters")
                                         mask_loss += loss.compute_active_filters_correlation(filters, m)
                                         found = True
+                                        matched_layers += 1
                                         break
-                                #if not found and self.rank == 0:
-                                 #   self.logger.warning(f"No mask found for Conv2d layer: {name}, assuming all filters active or skipping.")
+                                if not found and self.rank == 0:
+                                    self.logger.warning(f"No mask found for layer {name}")
 
-                        num_conv_layers = sum(1 for _, m in self.student.module.named_modules() if isinstance(m, nn.Conv2d))
-                        if num_conv_layers > 0:
-                            mask_loss = mask_loss / num_conv_layers
+                        if self.rank == 0:
+                            total_conv_layers = sum(1 for _, m in self.student.module.named_modules() if isinstance(m, nn.Conv2d))
+                            self.logger.info(f"Total Conv2d layers: {total_conv_layers}, Matched layers: {matched_layers}")
 
+                        if matched_layers > 0:
+                            mask_loss = mask_loss / matched_layers
+                        else:
+                            if self.rank == 0:
+                                self.logger.error("No layers with masks found. Check model definition or mask_modules.")
+                            raise RuntimeError("No matching masks found for Conv2d layers. Ensure mask_modules are correctly defined and aligned with Conv2d layers.")
+
+                        return mask_loss
+                        
                         total_loss = (
                             ori_loss
                             + self.coef_kdloss * kd_loss
@@ -561,26 +572,38 @@ class TrainDDP:
                                         feature_list_student[i], feature_list_teacher[i]
                                     )
 
-                                mask_loss = torch.tensor(0.0, device=images.device)
+                                mask_loss = torch.tensor(0.0, device=images.device, dtype=torch.float32)
+                                matched_layers = 0
                                 for name, module in self.student.module.named_modules():
                                     if isinstance(module, nn.Conv2d):
-                                        filters = module.weight
+                                        filters = module.weight 
                                         found = False
                                         for mask_module in self.student.module.mask_modules:
                                             if hasattr(mask_module, 'mask') and mask_module.mask.shape[0] == filters.shape[0] and mask_module.layer_name == name:
-                                                m = mask_module.mask
+                                                m = mask_module.mask 
                                                 active_filters = torch.sum(m).item()
                                                 if self.rank == 0:
                                                     self.logger.info(f"Layer {name}: {active_filters} active filters")
                                                 mask_loss += loss.compute_active_filters_correlation(filters, m)
                                                 found = True
+                                                matched_layers += 1
                                                 break
-                                       # if not found and self.rank == 0:
-                                        #    self.logger.warning(f"No mask found for Conv2d layer: {name}, assuming all filters active or skipping.")
+                                        if not found and self.rank == 0:
+                                            self.logger.warning(f"No mask found for layer {name}")
 
-                                num_conv_layers = sum(1 for _, m in self.student.module.named_modules() if isinstance(m, nn.Conv2d))
-                                if num_conv_layers > 0:
-                                    mask_loss = mask_loss / num_conv_layers
+                                 if self.rank == 0:
+                                     total_conv_layers = sum(1 for _, m in self.student.module.named_modules() if isinstance(m, nn.Conv2d))
+                                     self.logger.info(f"Total Conv2d layers: {total_conv_layers}, Matched layers: {matched_layers}")
+
+                                 if matched_layers > 0:
+                                     mask_loss = mask_loss / matched_layers
+                                     
+                                 else:
+                                     if self.rank == 0:
+                                        self.logger.error("No layers with masks found. Check model definition or mask_modules.")
+                                     raise RuntimeError("No matching masks found for Conv2d layers. Ensure mask_modules are correctly defined and aligned with Conv2d layers.")
+
+                                 return mask_loss
 
                                 total_val_loss = (
                                     ori_loss
