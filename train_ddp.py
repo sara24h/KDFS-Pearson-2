@@ -64,7 +64,7 @@ class TrainDDP:
 
         if self.dataset_mode == "hardfake":
             self.args.dataset_type = "hardfakevsrealfaces"
-            self.num_classes = 20
+            self.num_classes = 1  # Changed to 1 for binary classification
             self.image_size = 300
         elif self.dataset_mode == "rvf10k":
             self.args.dataset_type = "rvf10k"
@@ -233,7 +233,7 @@ class TrainDDP:
             )
         self.student.dataset_type = self.args.dataset_type
         num_ftrs = self.student.fc.in_features
-        self.student.fc = nn.Linear(num_ftrs, 1)
+        self.student.fc = nn.Linear(num_ftrs, 1)  # Ensure output is 1 for binary classification
         self.student = self.student.cuda()
         self.student = DDP(self.student, device_ids=[self.local_rank])
 
@@ -420,7 +420,7 @@ class TrainDDP:
                                         m = mask_module.mask
                                         correlation, active_indices = self.mask_loss(filters, m, is_training=True)
                                         #if self.rank == 0:
-                                         #   self.logger.info(f"Layer {name}: {len(active_indices)} active filters, indices={active_indices.tolist()}, correlation={correlation.item()}")
+                                        #    self.logger.info(f"Layer {name}: {len(active_indices)} active filters, indices={active_indices.tolist()}, correlation={correlation.item()}")
                                         mask_loss += correlation
                                         found = True
                                         matched_layers += 1
@@ -533,13 +533,8 @@ class TrainDDP:
             # Validation
             if self.rank == 0:
                 self.student.eval()
-                self.student.module.ticket = True
-                meter_top1.reset()
-                meter_val_loss = meter.AverageMeter("ValLoss", ":.4e")
-                meter_val_oriloss = meter.AverageMeter("ValOriLoss", ":.4e")
-                meter_val_kdloss = meter.AverageMeter("ValKDLoss", ":.4e")
-                meter_val_rcloss = meter.AverageMeter("ValRCLoss", ":.4e")
-                meter_val_maskloss = meter.AverageMeter("ValMaskLoss", ":.6e")
+                self.student.module.ticket = True  # Enable binary mask
+                meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
 
                 with torch.no_grad():
                     with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
@@ -552,65 +547,8 @@ class TrainDDP:
                                 self.logger.warning("Invalid input detected in validation (NaN or Inf)")
                                 continue
 
-                            with autocast():
-                                logits_student, feature_list_student = self.student(images)
-                                logits_student = logits_student.squeeze(1)
-                                logits_teacher, feature_list_teacher = self.teacher(images)
-                                logits_teacher = logits_teacher.squeeze(1)
-
-                                ori_loss = self.ori_loss(logits_student, targets)
-                                kd_loss = (self.target_temperature**2) * self.kd_loss(
-                                    logits_teacher,
-                                    logits_student,
-                                    self.target_temperature
-                                )
-                                rc_loss = torch.tensor(0.0, device=images.device, dtype=torch.float32)
-                                for i in range(len(feature_list_student)):
-                                    rc_loss += self.rc_loss(
-                                        feature_list_student[i], feature_list_teacher[i]
-                                    )
-
-                                from model.student.ResNet_sparse import SoftMaskedConv2d
-                                mask_loss = torch.tensor(0.0, device=images.device, dtype=torch.float32)
-                                matched_layers = 0
-                                for name, module in self.student.module.named_modules():
-                                    if isinstance(module, SoftMaskedConv2d):
-                                        filters = module.weight
-                                        found = False
-                                        adjusted_name = name.replace("module.", "")
-                                        for mask_module in self.student.module.mask_modules:
-                                            if mask_module.mask.shape[0] == filters.shape[0] and mask_module.layer_name == adjusted_name:
-                                                m = mask_module.mask
-                                                correlation, active_indices = self.mask_loss(filters, m, is_training=False)
-                                                #self.logger.info(f"Layer {name}: {len(active_indices)} active filters, indices={active_indices.tolist()}, correlation={correlation.item()}")
-                                                mask_loss += correlation
-                                                found = True
-                                                matched_layers += 1
-                                                break
-                                        if not found:
-                                            self.logger.warning(f"No mask found for layer {name} (adjusted: {adjusted_name})")
-
-                                if matched_layers > 0:
-                                    mask_loss = mask_loss / matched_layers
-                                else:
-                                    self.logger.warning("No layers matched for mask loss calculation in validation.")
-
-                                total_conv_layers = sum(1 for _, m in self.student.module.named_modules() if isinstance(m, (nn.Conv2d, SoftMaskedConv2d)))
-                                self.logger.info(f"Total Conv2d and SoftMaskedConv2d layers: {total_conv_layers}, Matched layers: {matched_layers}")
-
-                                total_val_loss = (
-                                    ori_loss
-                                    + self.coef_kdloss * kd_loss
-                                    + self.coef_rcloss * rc_loss / len(feature_list_student)
-                                    + self.coef_maskloss * mask_loss
-                                )
-
-                            meter_val_oriloss.update(ori_loss.item(), images.size(0))
-                            meter_val_kdloss.update(self.coef_kdloss * kd_loss.item(), images.size(0))
-                            meter_val_rcloss.update(self.coef_rcloss * rc_loss.item() / len(feature_list_student), images.size(0))
-                            meter_val_maskloss.update(self.coef_maskloss * mask_loss.item(), images.size(0))
-                            meter_val_loss.update(total_val_loss.item(), images.size(0))
-
+                            logits_student, _ = self.student(images)
+                            logits_student = logits_student.squeeze(1)
                             preds = (torch.sigmoid(logits_student) > 0.5).float()
                             correct = (preds == targets).sum().item()
                             prec1 = 100. * correct / images.size(0)
@@ -619,40 +557,20 @@ class TrainDDP:
 
                             _tqdm.set_postfix(
                                 val_acc="{:.4f}".format(meter_top1.avg),
-                                val_loss="{:.4f}".format(meter_val_loss.avg),
-                                val_ori_loss="{:.4f}".format(meter_val_oriloss.avg),
-                                val_kd_loss="{:.4f}".format(meter_val_kdloss.avg),
-                                val_rc_loss="{:.4f}".format(meter_val_rcloss.avg),
-                                val_mask_loss="{:.6f}".format(meter_val_maskloss.avg)
                             )
                             _tqdm.update(1)
                             time.sleep(0.01)
 
                 Flops = self.student.module.get_flops()
                 self.writer.add_scalar("val/acc/top1", meter_top1.avg, global_step=epoch)
-                self.writer.add_scalar("val/loss/ori_loss", meter_val_oriloss.avg, global_step=epoch)
-                self.writer.add_scalar("val/loss/kd_loss", meter_val_kdloss.avg, global_step=epoch)
-                self.writer.add_scalar("val/loss/rc_loss", meter_val_rcloss.avg, global_step=epoch)
-                self.writer.add_scalar("val/loss/mask_loss", meter_val_maskloss.avg, global_step=epoch)
-                self.writer.add_scalar("val/loss/total_loss", meter_val_loss.avg, global_step=epoch)
                 self.writer.add_scalar("val/Flops", Flops, global_step=epoch)
 
                 self.logger.info(
                     "[Val] "
                     "Epoch {0} : "
-                    "Val_Acc {val_acc:.2f}, "
-                    "Val_OriLoss {val_ori_loss:.4f}, "
-                    "Val_KDLoss {val_kd_loss:.4f}, "
-                    "Val_RCLoss {val_rc_loss:.4f}, "
-                    "Val_MaskLoss {val_mask_loss:.6f}, "
-                    "Val_TotalLoss {val_total_loss:.4f}".format(
+                    "Val_Acc {val_acc:.2f}".format(
                         epoch,
                         val_acc=meter_top1.avg,
-                        val_ori_loss=meter_val_oriloss.avg,
-                        val_kd_loss=meter_val_kdloss.avg,
-                        val_rc_loss=meter_val_rcloss.avg,
-                        val_mask_loss=meter_val_maskloss.avg,
-                        val_total_loss=meter_val_loss.avg
                     )
                 )
 
