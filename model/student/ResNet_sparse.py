@@ -6,13 +6,14 @@ import math
 from thop import profile
 
 class SoftMaskedConv2d(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, bias=True):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, bias=True, layer_name=None):
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.kernel_size = kernel_size
         self.stride = stride
         self.padding = padding
+        self.layer_name = layer_name  
         self.weight = nn.Parameter(torch.Tensor(out_channels, in_channels, kernel_size, kernel_size))
         self.bias = nn.Parameter(torch.Tensor(out_channels)) if bias else None
         self.init_weight()
@@ -100,10 +101,10 @@ class MaskedNet(nn.Module):
         image_sizes = {
             "hardfakevsrealfaces": 300,
             "rvf10k": 256,
-            "140k": 256  # اضافه کردن اندازه تصویر برای دیتاست 140k
+            "140k": 256
         }
         dataset_type = getattr(self, "dataset_type", "hardfakevsrealfaces")
-        input_size = image_sizes.get(dataset_type, 256)  # مقدار پیش‌فرض 256 در صورت عدم وجود
+        input_size = image_sizes.get(dataset_type, 256)
         
         conv1_h = (input_size - 7 + 2 * 3) // 2 + 1
         maxpool_h = (conv1_h - 3 + 2 * 1) // 2 + 1
@@ -119,7 +120,7 @@ class MaskedNet(nn.Module):
             m = m.to(device)
             Flops_shortcut_conv = 0
             Flops_shortcut_bn = 0
-            if len(self.mask_modules) == 48:  # برای ResNet-50
+            if len(self.mask_modules) == 48:  
                 if i % 3 == 0:
                     Flops_conv = (
                         m.feature_map_h * m.feature_map_w * m.kernel_size * m.kernel_size *
@@ -137,7 +138,7 @@ class MaskedNet(nn.Module):
                         (m.out_channels // 4) * m.out_channels
                     )
                     Flops_shortcut_bn = m.feature_map_h * m.feature_map_w * m.out_channels
-            elif len(self.mask_modules) in [16, 32]:  # برای مدل‌های دیگر
+            elif len(self.mask_modules) in [16, 32]:
                 if i % 2 == 0:
                     Flops_conv = (
                         m.feature_map_h * m.feature_map_w * m.kernel_size * m.kernel_size *
@@ -164,14 +165,14 @@ class MaskedNet(nn.Module):
 class BasicBlock_sparse(nn.Module):
     expansion = 1
 
-    def __init__(self, in_planes, planes, stride=1):
+    def __init__(self, in_planes, planes, stride=1, layer_name=None):
         super().__init__()
         self.conv1 = SoftMaskedConv2d(
-            in_planes, planes, kernel_size=3, stride=stride, padding=1, bias=False
+            in_planes, planes, kernel_size=3, stride=stride, padding=1, bias=False, layer_name=f"{layer_name}.conv1"
         )
         self.bn1 = nn.BatchNorm2d(planes)
         self.conv2 = SoftMaskedConv2d(
-            planes, planes, kernel_size=3, stride=1, padding=1, bias=False
+            planes, planes, kernel_size=3, stride=1, padding=1, bias=False, layer_name=f"{layer_name}.conv2"
         )
         self.bn2 = nn.BatchNorm2d(planes)
 
@@ -198,16 +199,18 @@ class BasicBlock_sparse(nn.Module):
 class Bottleneck_sparse(nn.Module):
     expansion = 4
 
-    def __init__(self, in_planes, planes, stride=1):
+    def __init__(self, in_planes, planes, stride=1, layer_name=None):
         super().__init__()
-        self.conv1 = SoftMaskedConv2d(in_planes, planes, kernel_size=1, bias=False)
+        self.conv1 = SoftMaskedConv2d(
+            in_planes, planes, kernel_size=1, bias=False, layer_name=f"{layer_name}.conv1"
+        )
         self.bn1 = nn.BatchNorm2d(planes)
         self.conv2 = SoftMaskedConv2d(
-            planes, planes, kernel_size=3, stride=stride, padding=1, bias=False
+            planes, planes, kernel_size=3, stride=stride, padding=1, bias=False, layer_name=f"{layer_name}.conv2"
         )
         self.bn2 = nn.BatchNorm2d(planes)
         self.conv3 = SoftMaskedConv2d(
-            planes, self.expansion * planes, kernel_size=1, bias=False
+            planes, self.expansion * planes, kernel_size=1, bias=False, layer_name=f"{layer_name}.conv3"
         )
         self.bn3 = nn.BatchNorm2d(self.expansion * planes)
 
@@ -237,7 +240,7 @@ class ResNet_sparse(MaskedNet):
         self,
         block,
         num_blocks,
-        num_classes=1,  # تغییر به 1 برای خروجی باینری
+        num_classes=1,
         gumbel_start_temperature=2.0,
         gumbel_end_temperature=0.5,
         num_epochs=200,
@@ -255,10 +258,10 @@ class ResNet_sparse(MaskedNet):
         self.bn1 = nn.BatchNorm2d(64)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
 
-        self.layer1 = self._make_layer(block, 64, num_blocks[0], stride=1)
-        self.layer2 = self._make_layer(block, 128, num_blocks[1], stride=2)
-        self.layer3 = self._make_layer(block, 256, num_blocks[2], stride=2)
-        self.layer4 = self._make_layer(block, 512, num_blocks[3], stride=2)
+        self.layer1 = self._make_layer(block, 64, num_blocks[0], stride=1, layer_prefix="layer1")
+        self.layer2 = self._make_layer(block, 128, num_blocks[1], stride=2, layer_prefix="layer2")
+        self.layer3 = self._make_layer(block, 256, num_blocks[2], stride=2, layer_prefix="layer3")
+        self.layer4 = self._make_layer(block, 512, num_blocks[3], stride=2, layer_prefix="layer4")
         self.avgpool = nn.Sequential(nn.AvgPool2d(7))
         self.fc = nn.Linear(512 * block.expansion, num_classes)
 
@@ -274,11 +277,12 @@ class ResNet_sparse(MaskedNet):
         self.mask_modules = [m for m in self.modules() if isinstance(m, SoftMaskedConv2d)]
         self.mask_modules = [m.to(next(self.parameters()).device) for m in self.mask_modules]
 
-    def _make_layer(self, block, planes, num_blocks, stride):
+    def _make_layer(self, block, planes, num_blocks, stride, layer_prefix):
         strides = [stride] + [1] * (num_blocks - 1)
         layers = []
-        for stride in strides:
-            layers.append(block(self.in_planes, planes, stride))
+        for i, stride in enumerate(strides):
+            layer_name = f"{layer_prefix}.{i}"
+            layers.append(block(self.in_planes, planes, stride, layer_name=layer_name))
             self.in_planes = planes * block.expansion
         return nn.Sequential(*layers)
 
@@ -314,7 +318,7 @@ def ResNet_50_sparse_hardfakevsreal(
     return ResNet_sparse(
         block=Bottleneck_sparse,
         num_blocks=[3, 4, 6, 3],
-        num_classes=1,  # تغییر به 1 برای خروجی باینری
+        num_classes=1,
         gumbel_start_temperature=gumbel_start_temperature,
         gumbel_end_temperature=gumbel_end_temperature,
         num_epochs=num_epochs,
@@ -327,7 +331,7 @@ def ResNet_50_sparse_rvf10k(
     return ResNet_sparse(
         block=Bottleneck_sparse,
         num_blocks=[3, 4, 6, 3],
-        num_classes=1,  # تغییر به 1 برای خروجی باینری
+        num_classes=1,
         gumbel_start_temperature=gumbel_start_temperature,
         gumbel_end_temperature=gumbel_end_temperature,
         num_epochs=num_epochs,
@@ -340,7 +344,7 @@ def ResNet_50_sparse_140k(
     return ResNet_sparse(
         block=Bottleneck_sparse,
         num_blocks=[3, 4, 6, 3],
-        num_classes=1,  # تغییر به 1 برای خروجی باینری
+        num_classes=1,
         gumbel_start_temperature=gumbel_start_temperature,
         gumbel_end_temperature=gumbel_end_temperature,
         num_epochs=num_epochs,
