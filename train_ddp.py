@@ -550,7 +550,7 @@ class TrainDDP:
                                 self.logger.warning("Invalid input detected in validation (NaN or Inf)")
                                 continue
 
-                            with autocast(device_type='cuda'):
+                            with torch.amp.autocast('cuda'):
                                 logits_student, feature_list_student = self.student(images)
                                 logits_student = logits_student.squeeze(1)
                                 logits_teacher, feature_list_teacher = self.teacher(images)
