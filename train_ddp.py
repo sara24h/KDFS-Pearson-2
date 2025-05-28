@@ -414,7 +414,7 @@ class TrainDDP:
                             if isinstance(module, SoftMaskedConv2d):
                                 filters = module.weight
                                 found = False
-                                adjusted_name = name.lstrip("module.")
+                                adjusted_name = name.replace("module.", "")  # اصلاح نام لایه برای حذف پیشوند module.
                                 for mask_module in self.student.module.mask_modules:
                                     if mask_module.mask.shape[0] == filters.shape[0] and mask_module.layer_name == adjusted_name:
                                         m = mask_module.mask
@@ -430,6 +430,9 @@ class TrainDDP:
 
                         if matched_layers > 0:
                             mask_loss = mask_loss / matched_layers
+                        else:
+                            if self.rank == 0:
+                                self.logger.warning("No layers matched for mask loss calculation.")
 
                         if self.rank == 0:
                             total_conv_layers = sum(1 for _, m in self.student.module.named_modules() if isinstance(m, (nn.Conv2d, SoftMaskedConv2d)))
@@ -574,9 +577,9 @@ class TrainDDP:
                                     if isinstance(module, SoftMaskedConv2d):
                                         filters = module.weight
                                         found = False
-                                        adjusted_name = name.lstrip("module.")
+                                        adjusted_name = name.replace("module.", "")
                                         for mask_module in self.student.module.mask_modules:
-                                            if mask_module.mask.shape[0] == filters.shape[0] and mask_module.layer_name == adjusted_name:
+                                            if mask_module.mask.shape[0] == filters.shape[0] and mask_module.layer_name == adjusted_name:
                                                 m = mask_module.mask
                                                 correlation, active_indices = self.mask_loss(filters, m, is_training=False)
                                                 self.logger.info(f"Layer {name}: {len(active_indices)} active filters, indices={active_indices.tolist()}, correlation={correlation.item()}")
@@ -589,6 +592,8 @@ class TrainDDP:
 
                                 if matched_layers > 0:
                                     mask_loss = mask_loss / matched_layers
+                                else:
+                                    self.logger.warning("No layers matched for mask loss calculation in validation.")
 
                                 total_conv_layers = sum(1 for _, m in self.student.module.named_modules() if isinstance(m, (nn.Conv2d, SoftMaskedConv2d)))
                                 self.logger.info(f"Total Conv2d and SoftMaskedConv2d layers: {total_conv_layers}, Matched layers: {matched_layers}")
