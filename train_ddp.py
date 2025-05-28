@@ -10,21 +10,19 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-from torch import amp
-from torch.cuda.amp import autocast, GradScaler
+from torch.cuda.amp import GradScaler, autocast
 from data.dataset import Dataset_selector
-from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k
+from model.student_list import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k
 from utils import utils, loss, meter, scheduler
 from thop import profile
-from model.teacher.ResNet import ResNet_50_hardfakevsreal
-from torch.amp import autocast as amp_autocast
+from model.teacher_list import ResNet_50_hardfakevsreal
 
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 
 Flops_baselines = {
     "ResNet_50": {
         "hardfakevsrealfaces": 7700.0,
-        "rvf10k": 5000.0,
+        "rvf10k": 5000,
         "140k": 5390.0,
     }
 }
@@ -66,7 +64,7 @@ class TrainDDP:
 
         if self.dataset_mode == "hardfake":
             self.args.dataset_type = "hardfakevsrealfaces"
-            self.num_classes = 1
+            self.num_classes = 20
             self.image_size = 300
         elif self.dataset_mode == "rvf10k":
             self.args.dataset_type = "rvf10k"
@@ -147,7 +145,7 @@ class TrainDDP:
             rvf10k_valid_csv = None
             rvf10k_root_dir = None
             realfake140k_train_csv = os.path.join(self.dataset_dir, 'train.csv')
-            realfake140k_valid_csv = os.path.join(self.dataset_dir, 'valid.csv')
+            realfake140k_valid_csv = os.path.join(self.dataset_dir, 'valid_csv')
             realfake140k_test_csv = os.path.join(self.dataset_dir, 'test.csv')
             realfake140k_root_dir = self.dataset_dir
 
@@ -339,7 +337,7 @@ class TrainDDP:
 
         torch.cuda.empty_cache()
         self.teacher.eval()
-        scaler = torch.amp.GradScaler('cuda')
+        scaler = GradScaler()
 
         if self.resume:
             self.resume_student_ckpt()
@@ -379,13 +377,13 @@ class TrainDDP:
                     self.optim_mask.zero_grad()
                     images = images.cuda()
                     targets = targets.cuda().float()
-                    
+
                     if torch.isnan(images).any() or torch.isinf(images).any() or torch.isnan(targets).any() or torch.isinf(targets).any():
                         if self.rank == 0:
                             self.logger.warning("Invalid input detected (NaN or Inf)")
                         continue
-                    
-                    with torch.amp.autocast('cuda'):
+
+                    with autocast():
                         logits_student, feature_list_student = self.student(images)
                         logits_student = logits_student.squeeze(1)
                         with torch.no_grad():
@@ -393,7 +391,7 @@ class TrainDDP:
                             logits_teacher = logits_teacher.squeeze(1)
 
                         ori_loss = self.ori_loss(logits_student, targets)
-                        
+
                         kd_loss = (self.target_temperature**2) * self.kd_loss(
                             logits_teacher,
                             logits_student,
@@ -407,41 +405,41 @@ class TrainDDP:
                             )
 
                         mask_loss = torch.tensor(0.0, device=images.device, dtype=torch.float32)
-                                matched_layers = 0
-                                if self.rank == 0:
-                                    self.logger.info(f"Total mask modules: {len(self.student.module.mask_modules)}")
-                                    for mask_module in self.student.module.mask_modules:
-                                        if hasattr(mask_module, 'mask'):
-                                            self.logger.info(f"Mask module: layer_name={mask_module.layer_name}, mask_shape={mask_module.mask.shape}, mask_mean={mask_module.mask.mean().item()}")
+                        matched_layers = 0
+                        if self.rank == 0:
+                            self.logger.info(f"Total mask modules: {len(self.student.module.mask_modules)}")
+                            for mask_module in self.student.module.mask_modules:
+                                if hasattr(mask_module, 'mask'):
+                                    self.logger.info(f"Mask module: layer_name={mask_module.layer_name}, mask_shape={mask_module.mask.shape}, mask_mean={mask_module.mask.mean().item()}")
 
-                                for name, module in self.student.module.named_modules():
-                                    if isinstance(module, nn.Conv2d):
-                                        filters = module.weight
+                        for name, module in self.student.module.named_modules():
+                            if isinstance(module, nn.Conv2d):
+                                filters = module.weight
+                                if self.rank == 0:
+                                    self.logger.info(f"Checking layer {name}, filter shape: {filters.shape}")
+                                found = False
+                                for mask_module in self.student.module.mask_modules:
+                                    if hasattr(mask_module, 'mask'):
                                         if self.rank == 0:
-                                            self.logger.info(f"Checking layer {name}, filter shape: {filters.shape}")
-                                        found = False
-                                        for mask_module in self.student.module.mask_modules:
-                                            if hasattr(mask_module, 'mask'):
-                                                if self.rank == 0:
-                                                    self.logger.info(f"Comparing with mask: layer_name={mask_module.layer_name}, mask_shape={mask_module.mask.shape}")
-                                            if mask_module.mask.shape[0] == filters.shape[0] and mask_module.layer_name == name:
-                                                m = mask_module.mask
-                                                correlation, active_indices = self.mask_loss(filters, m, is_training=True)
-                                                if self.rank == 0:
-                                                    self.logger.info(f"Layer {name}: {len(active_indices)} active filters, indices={active_indices.tolist()}, correlation={correlation.item()}")
-                                                mask_loss += correlation
-                                                found = True
-                                                matched_layers += 1
-                                                break
-                                        if not found and self.rank == 0:
-                                            self.logger.warning(f"No mask found for layer {name}")
+                                            self.logger.info(f"Comparing with mask: layer_name={mask_module.layer_name}, mask_shape={mask_module.mask.shape}")
+                                    if mask_module.mask.shape[0] == filters.shape[0] and mask_module.layer_name == name:
+                                        m = mask_module.mask
+                                        correlation, active_indices = self.mask_loss(filters, m, is_training=True)
+                                        if self.rank == 0:
+                                            self.logger.info(f"Layer {name}: {len(active_indices)} active filters, indices={active_indices.tolist()}, correlation={correlation.item()}")
+                                        mask_loss += correlation
+                                        found = True
+                                        matched_layers += 1
+                                        break
+                                if not found and self.rank == 0:
+                                    self.logger.warning(f"No mask found for layer {name}")
 
-                                if self.rank == 0:
-                                    total_conv_layers = sum(1 for _, m in self.student.module.named_modules() if isinstance(m, nn.Conv2d))
-                                    self.logger.info(f"Total Conv2d layers: {total_conv_layers}, Matched layers: {matched_layers}")
+                        if self.rank == 0:
+                            total_conv_layers = sum(1 for _, m in self.student.module.named_modules() if isinstance(m, nn.Conv2d))
+                            self.logger.info(f"Total Conv2d layers: {total_conv_layers}, Matched layers: {matched_layers}")
 
-                                if matched_layers > 0:
-                                    mask_loss = mask_loss / matched_layers
+                        if matched_layers > 0:
+                            mask_loss = mask_loss / matched_layers
 
                         total_loss = (
                             ori_loss
@@ -557,14 +555,14 @@ class TrainDDP:
                                 self.logger.warning("Invalid input detected in validation (NaN or Inf)")
                                 continue
 
-                            with torch.amp.autocast('cuda'):
+                            with autocast():
                                 logits_student, feature_list_student = self.student(images)
                                 logits_student = logits_student.squeeze(1)
                                 logits_teacher, feature_list_teacher = self.teacher(images)
                                 logits_teacher = logits_teacher.squeeze(1)
 
                                 ori_loss = self.ori_loss(logits_student, targets)
-                                
+
                                 kd_loss = (self.target_temperature**2) * self.kd_loss(
                                     logits_teacher,
                                     logits_student,
@@ -613,7 +611,7 @@ class TrainDDP:
 
                                 if matched_layers > 0:
                                     mask_loss = mask_loss / matched_layers
-                                 
+
                                 total_val_loss = (
                                     ori_loss
                                     + self.coef_kdloss * kd_loss
