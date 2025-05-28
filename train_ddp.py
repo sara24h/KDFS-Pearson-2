@@ -419,8 +419,8 @@ class TrainDDP:
                                         mask_loss += loss.compute_active_filters_correlation(filters, m)
                                         found = True
                                         break
-                                if not found and self.rank == 0:
-                                    self.logger.warning(f"No mask found for Conv2d layer: {name}, assuming all filters active or skipping.")
+                                #if not found and self.rank == 0:
+                                 #   self.logger.warning(f"No mask found for Conv2d layer: {name}, assuming all filters active or skipping.")
 
                         num_conv_layers = sum(1 for _, m in self.student.module.named_modules() if isinstance(m, nn.Conv2d))
                         if num_conv_layers > 0:
@@ -575,8 +575,8 @@ class TrainDDP:
                                                 mask_loss += loss.compute_active_filters_correlation(filters, m)
                                                 found = True
                                                 break
-                                        if not found and self.rank == 0:
-                                            self.logger.warning(f"No mask found for Conv2d layer: {name}, assuming all filters active or skipping.")
+                                       # if not found and self.rank == 0:
+                                        #    self.logger.warning(f"No mask found for Conv2d layer: {name}, assuming all filters active or skipping.")
 
                                 num_conv_layers = sum(1 for _, m in self.student.module.named_modules() if isinstance(m, nn.Conv2d))
                                 if num_conv_layers > 0:
