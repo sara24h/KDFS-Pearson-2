@@ -431,8 +431,8 @@ class TrainDDP:
                                         found = True
                                         matched_layers += 1
                                         break
-                                if not found and self.rank == 0:
-                                    self.logger.warning(f"No mask found for layer {name}")
+                                #if not found and self.rank == 0:
+                                 #   self.logger.warning(f"No mask found for layer {name}")
 
                         if self.rank == 0:
                             total_conv_layers = sum(1 for _, m in self.student.module.named_modules() if isinstance(m, nn.Conv2d))
@@ -602,8 +602,8 @@ class TrainDDP:
                                                 found = True
                                                 matched_layers += 1
                                                 break
-                                        if not found and self.rank == 0:
-                                            self.logger.warning(f"No mask found for layer {name}")
+                                        #if not found and self.rank == 0:
+                                         #   self.logger.warning(f"No mask found for layer {name}")
 
                                 if self.rank == 0:
                                     total_conv_layers = sum(1 for _, m in self.student.module.named_modules() if isinstance(m, nn.Conv2d))
