@@ -408,19 +408,19 @@ class TrainDDP:
                         matched_layers = 0
                         if self.rank == 0:
                             self.logger.info(f"Total mask modules: {len(self.student.module.mask_modules)}")
-                            for mask_module in self.student.module.mask_modules:
-                                if hasattr(mask_module, 'mask'):
+                            #for mask_module in self.student.module.mask_modules:
+                             #   if hasattr(mask_module, 'mask'):
                                     #self.logger.info(f"Mask module: layer_name={mask_module.layer_name}, mask_shape={mask_module.mask.shape}, mask_mean={mask_module.mask.mean().item()}")
 
                         for name, module in self.student.module.named_modules():
                             if isinstance(module, nn.Conv2d):
                                 filters = module.weight
-                                if self.rank == 0:
+                                #if self.rank == 0:
                                     #self.logger.info(f"Checking layer {name}, filter shape: {filters.shape}")
                                 found = False
                                 for mask_module in self.student.module.mask_modules:
-                                    if hasattr(mask_module, 'mask'):
-                                        if self.rank == 0:
+                                    #if hasattr(mask_module, 'mask'):
+                                     #   if self.rank == 0:
                                             #self.logger.info(f"Comparing with mask: layer_name={mask_module.layer_name}, mask_shape={mask_module.mask.shape}")
                                     if mask_module.mask.shape[0] == filters.shape[0] and mask_module.layer_name == name:
                                         m = mask_module.mask
@@ -579,19 +579,19 @@ class TrainDDP:
                                 matched_layers = 0
                                 if self.rank == 0:
                                     self.logger.info(f"Total mask modules: {len(self.student.module.mask_modules)}")
-                                    for mask_module in self.student.module.mask_modules:
-                                        if hasattr(mask_module, 'mask'):
+                                    #for mask_module in self.student.module.mask_modules:
+                                       # if hasattr(mask_module, 'mask'):
                                             #self.logger.info(f"Mask module: layer_name={mask_module.layer_name}, mask_shape={mask_module.mask.shape}, mask_mean={mask_module.mask.mean().item()}")
 
                                 for name, module in self.student.module.named_modules():
                                     if isinstance(module, nn.Conv2d):
                                         filters = module.weight
-                                        if self.rank == 0:
+                                    #    if self.rank == 0:
                                             #self.logger.info(f"Checking layer {name}, filter shape: {filters.shape}")
                                         found = False
                                         for mask_module in self.student.module.mask_modules:
-                                            if hasattr(mask_module, 'mask'):
-                                                if self.rank == 0:
+                                      #      if hasattr(mask_module, 'mask'):
+                                     #           if self.rank == 0:
                                                     #self.logger.info(f"Comparing with mask: layer_name={mask_module.layer_name}, mask_shape={mask_module.mask.shape}")
                                             if mask_module.mask.shape[0] == filters.shape[0] and mask_module.layer_name == name:
                                                 m = mask_module.mask
