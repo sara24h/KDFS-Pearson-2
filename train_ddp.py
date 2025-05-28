@@ -414,7 +414,7 @@ class TrainDDP:
                             if isinstance(module, SoftMaskedConv2d):
                                 filters = module.weight
                                 found = False
-                                adjusted_name = name.replace("module.", "")  # اصلاح نام لایه برای حذف پیشوند module.
+                                adjusted_name = name.replace("module.", "") 
                                 for mask_module in self.student.module.mask_modules:
                                     if mask_module.mask.shape[0] == filters.shape[0] and mask_module.layer_name == adjusted_name:
                                         m = mask_module.mask
@@ -579,7 +579,7 @@ class TrainDDP:
                                         found = False
                                         adjusted_name = name.replace("module.", "")
                                         for mask_module in self.student.module.mask_modules:
-                                            if mask_module.mask.shape[0] == filters.shape[0] and mask_module.layer_name == adjusted_name:
+                                            if mask_module.mask.shape[0] == filters.shape[0] and mask_module.layer_name == adjusted_name:
                                                 m = mask_module.mask
                                                 correlation, active_indices = self.mask_loss(filters, m, is_training=False)
                                                 self.logger.info(f"Layer {name}: {len(active_indices)} active filters, indices={active_indices.tolist()}, correlation={correlation.item()}")
