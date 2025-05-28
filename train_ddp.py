@@ -10,6 +10,7 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
+from torch import amp
 from torch.cuda.amp import autocast, GradScaler
 from data.dataset import Dataset_selector
 from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k
@@ -338,7 +339,7 @@ class TrainDDP:
 
         torch.cuda.empty_cache()
         self.teacher.eval()
-        scaler = GradScaler('cuda')
+        scaler = torch.amp.GradScaler('cuda')
 
         if self.resume:
             self.resume_student_ckpt()
@@ -384,7 +385,7 @@ class TrainDDP:
                             self.logger.warning("Invalid input detected (NaN or Inf)")
                         continue
                     
-                    with autocast(device_type='cuda'):
+                    with torch.amp.autocast('cuda'):
                         logits_student, feature_list_student = self.student(images)
                         logits_student = logits_student.squeeze(1)
                         with torch.no_grad():
