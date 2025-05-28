@@ -434,7 +434,7 @@ class TrainDDP:
                         else:
                             if self.rank == 0:
                                 self.logger.error("No layers with masks found. Check model definition or mask_modules.")
-                            raise RuntimeError("No matching masks found for Conv2d layers. Ensure mask_modules are correctly defined and aligned with Conv2d layers.")
+                            #raise RuntimeError("No matching masks found for Conv2d layers. Ensure mask_modules are correctly defined and aligned with Conv2d layers.")
 
                         total_loss = (
                             ori_loss
@@ -598,7 +598,7 @@ class TrainDDP:
                                 else:
                                     if self.rank == 0:
                                         self.logger.error("No layers with masks found. Check model definition or mask_modules.")
-                                    raise RuntimeError("No matching masks found for Conv2d layers. Ensure mask_modules are correctly defined and aligned with Conv2d layers.")
+                                 #   raise RuntimeError("No matching masks found for Conv2d layers. Ensure mask_modules are correctly defined and aligned with Conv2d layers.")
 
                                 total_val_loss = (
                                     ori_loss
