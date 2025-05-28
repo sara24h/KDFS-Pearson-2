@@ -407,34 +407,41 @@ class TrainDDP:
                             )
 
                         mask_loss = torch.tensor(0.0, device=images.device, dtype=torch.float32)
-                        matched_layers = 0
-                        for name, module in self.student.module.named_modules():
-                            if isinstance(module, nn.Conv2d):
-                                filters = module.weight 
-                                found = False
-                                for mask_module in self.student.module.mask_modules:
-                                    if hasattr(mask_module, 'mask') and mask_module.mask.shape[0] == filters.shape[0] and mask_module.layer_name == name:
-                                        m = mask_module.mask 
-                                        active_filters = torch.sum(m).item()
+                                matched_layers = 0
+                                if self.rank == 0:
+                                    self.logger.info(f"Total mask modules: {len(self.student.module.mask_modules)}")
+                                    for mask_module in self.student.module.mask_modules:
+                                        if hasattr(mask_module, 'mask'):
+                                            self.logger.info(f"Mask module: layer_name={mask_module.layer_name}, mask_shape={mask_module.mask.shape}, mask_mean={mask_module.mask.mean().item()}")
+
+                                for name, module in self.student.module.named_modules():
+                                    if isinstance(module, nn.Conv2d):
+                                        filters = module.weight
                                         if self.rank == 0:
-                                            self.logger.info(f"Layer {name}: {active_filters} active filters")
-                                        mask_loss += self.mask_loss.compute_active_filters_correlation(filters, m)
-                                        found = True
-                                        matched_layers += 1
-                                        break
-                                if not found and self.rank == 0:
-                                    self.logger.warning(f"No mask found for layer {name}")
+                                            self.logger.info(f"Checking layer {name}, filter shape: {filters.shape}")
+                                        found = False
+                                        for mask_module in self.student.module.mask_modules:
+                                            if hasattr(mask_module, 'mask'):
+                                                if self.rank == 0:
+                                                    self.logger.info(f"Comparing with mask: layer_name={mask_module.layer_name}, mask_shape={mask_module.mask.shape}")
+                                            if mask_module.mask.shape[0] == filters.shape[0] and mask_module.layer_name == name:
+                                                m = mask_module.mask
+                                                correlation, active_indices = self.mask_loss(filters, m, is_training=True)
+                                                if self.rank == 0:
+                                                    self.logger.info(f"Layer {name}: {len(active_indices)} active filters, indices={active_indices.tolist()}, correlation={correlation.item()}")
+                                                mask_loss += correlation
+                                                found = True
+                                                matched_layers += 1
+                                                break
+                                        if not found and self.rank == 0:
+                                            self.logger.warning(f"No mask found for layer {name}")
 
-                        if self.rank == 0:
-                            total_conv_layers = sum(1 for _, m in self.student.module.named_modules() if isinstance(m, nn.Conv2d))
-                            self.logger.info(f"Total Conv2d layers: {total_conv_layers}, Matched layers: {matched_layers}")
+                                if self.rank == 0:
+                                    total_conv_layers = sum(1 for _, m in self.student.module.named_modules() if isinstance(m, nn.Conv2d))
+                                    self.logger.info(f"Total Conv2d layers: {total_conv_layers}, Matched layers: {matched_layers}")
 
-                        if matched_layers > 0:
-                            mask_loss = mask_loss / matched_layers
-                        else:
-                            if self.rank == 0:
-                                self.logger.error("No layers with masks found. Check model definition or mask_modules.")
-                            #raise RuntimeError("No matching masks found for Conv2d layers. Ensure mask_modules are correctly defined and aligned with Conv2d layers.")
+                                if matched_layers > 0:
+                                    mask_loss = mask_loss / matched_layers
 
                         total_loss = (
                             ori_loss
@@ -572,17 +579,28 @@ class TrainDDP:
 
                                 mask_loss = torch.tensor(0.0, device=images.device, dtype=torch.float32)
                                 matched_layers = 0
+                                if self.rank == 0:
+                                    self.logger.info(f"Total mask modules: {len(self.student.module.mask_modules)}")
+                                    for mask_module in self.student.module.mask_modules:
+                                        if hasattr(mask_module, 'mask'):
+                                            self.logger.info(f"Mask module: layer_name={mask_module.layer_name}, mask_shape={mask_module.mask.shape}, mask_mean={mask_module.mask.mean().item()}")
+
                                 for name, module in self.student.module.named_modules():
                                     if isinstance(module, nn.Conv2d):
-                                        filters = module.weight 
+                                        filters = module.weight
+                                        if self.rank == 0:
+                                            self.logger.info(f"Checking layer {name}, filter shape: {filters.shape}")
                                         found = False
                                         for mask_module in self.student.module.mask_modules:
-                                            if hasattr(mask_module, 'mask') and mask_module.mask.shape[0] == filters.shape[0] and mask_module.layer_name == name:
-                                                m = mask_module.mask 
-                                                active_filters = torch.sum(m).item()
+                                            if hasattr(mask_module, 'mask'):
                                                 if self.rank == 0:
-                                                    self.logger.info(f"Layer {name}: {active_filters} active filters")
-                                                mask_loss += self.mask_loss.compute_active_filters_correlation(filters, m)
+                                                    self.logger.info(f"Comparing with mask: layer_name={mask_module.layer_name}, mask_shape={mask_module.mask.shape}")
+                                            if mask_module.mask.shape[0] == filters.shape[0] and mask_module.layer_name == name:
+                                                m = mask_module.mask
+                                                correlation, active_indices = self.mask_loss(filters, m, is_training=True)
+                                                if self.rank == 0:
+                                                    self.logger.info(f"Layer {name}: {len(active_indices)} active filters, indices={active_indices.tolist()}, correlation={correlation.item()}")
+                                                mask_loss += correlation
                                                 found = True
                                                 matched_layers += 1
                                                 break
@@ -595,11 +613,7 @@ class TrainDDP:
 
                                 if matched_layers > 0:
                                     mask_loss = mask_loss / matched_layers
-                                else:
-                                    if self.rank == 0:
-                                        self.logger.error("No layers with masks found. Check model definition or mask_modules.")
-                                 #   raise RuntimeError("No matching masks found for Conv2d layers. Ensure mask_modules are correctly defined and aligned with Conv2d layers.")
-
+                                 
                                 total_val_loss = (
                                     ori_loss
                                     + self.coef_kdloss * kd_loss
