@@ -16,7 +16,7 @@ from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_
 from utils import utils, loss, meter, scheduler
 from thop import profile
 from model.teacher.ResNet import ResNet_50_hardfakevsreal
-from torch.amp import autocast, GradScaler
+from torch.amp import autocast as amp_autocast
 
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 
@@ -383,7 +383,7 @@ class TrainDDP:
                         if self.rank == 0:
                             self.logger.warning("Invalid input detected (NaN or Inf)")
                         continue
-                        
+                    
                     with autocast(device_type='cuda'):
                         logits_student, feature_list_student = self.student(images)
                         logits_student = logits_student.squeeze(1)
@@ -417,7 +417,7 @@ class TrainDDP:
                                         active_filters = torch.sum(m).item()
                                         if self.rank == 0:
                                             self.logger.info(f"Layer {name}: {active_filters} active filters")
-                                        mask_loss += loss.compute_active_filters_correlation(filters, m)
+                                        mask_loss += self.mask_loss.compute_active_filters_correlation(filters, m)
                                         found = True
                                         matched_layers += 1
                                         break
@@ -435,8 +435,6 @@ class TrainDDP:
                                 self.logger.error("No layers with masks found. Check model definition or mask_modules.")
                             raise RuntimeError("No matching masks found for Conv2d layers. Ensure mask_modules are correctly defined and aligned with Conv2d layers.")
 
-                        return mask_loss
-                        
                         total_loss = (
                             ori_loss
                             + self.coef_kdloss * kd_loss
@@ -534,11 +532,11 @@ class TrainDDP:
                 self.student.eval()
                 self.student.module.ticket = True
                 meter_top1.reset()
-                meter_val_loss = meter.AverageMeter("ValLoss", ":.4e")  # Total validation loss
-                meter_val_oriloss = meter.AverageMeter("ValOriLoss", ":.4e")  # Meter for ori_loss
-                meter_val_kdloss = meter.AverageMeter("ValKDLoss", ":.4e")    # Meter for kd_loss
-                meter_val_rcloss = meter.AverageMeter("ValRCLoss", ":.4e")    # Meter for rc_loss
-                meter_val_maskloss = meter.AverageMeter("ValMaskLoss", ":.6e") # Meter for mask_loss
+                meter_val_loss = meter.AverageMeter("ValLoss", ":.4e")
+                meter_val_oriloss = meter.AverageMeter("ValOriLoss", ":.4e")
+                meter_val_kdloss = meter.AverageMeter("ValKDLoss", ":.4e")
+                meter_val_rcloss = meter.AverageMeter("ValRCLoss", ":.4e")
+                meter_val_maskloss = meter.AverageMeter("ValMaskLoss", ":.6e")
 
                 with torch.no_grad():
                     with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
@@ -557,7 +555,6 @@ class TrainDDP:
                                 logits_teacher, feature_list_teacher = self.teacher(images)
                                 logits_teacher = logits_teacher.squeeze(1)
 
-                                # Compute validation losses
                                 ori_loss = self.ori_loss(logits_student, targets)
                                 
                                 kd_loss = (self.target_temperature**2) * self.kd_loss(
@@ -584,26 +581,23 @@ class TrainDDP:
                                                 active_filters = torch.sum(m).item()
                                                 if self.rank == 0:
                                                     self.logger.info(f"Layer {name}: {active_filters} active filters")
-                                                mask_loss += loss.compute_active_filters_correlation(filters, m)
+                                                mask_loss += self.mask_loss.compute_active_filters_correlation(filters, m)
                                                 found = True
                                                 matched_layers += 1
                                                 break
                                         if not found and self.rank == 0:
                                             self.logger.warning(f"No mask found for layer {name}")
 
-                                 if self.rank == 0:
-                                     total_conv_layers = sum(1 for _, m in self.student.module.named_modules() if isinstance(m, nn.Conv2d))
-                                     self.logger.info(f"Total Conv2d layers: {total_conv_layers}, Matched layers: {matched_layers}")
+                                if self.rank == 0:
+                                    total_conv_layers = sum(1 for _, m in self.student.module.named_modules() if isinstance(m, nn.Conv2d))
+                                    self.logger.info(f"Total Conv2d layers: {total_conv_layers}, Matched layers: {matched_layers}")
 
-                                 if matched_layers > 0:
-                                     mask_loss = mask_loss / matched_layers
-                                     
-                                 else:
-                                     if self.rank == 0:
+                                if matched_layers > 0:
+                                    mask_loss = mask_loss / matched_layers
+                                else:
+                                    if self.rank == 0:
                                         self.logger.error("No layers with masks found. Check model definition or mask_modules.")
-                                     raise RuntimeError("No matching masks found for Conv2d layers. Ensure mask_modules are correctly defined and aligned with Conv2d layers.")
-
-                                 return mask_loss
+                                    raise RuntimeError("No matching masks found for Conv2d layers. Ensure mask_modules are correctly defined and aligned with Conv2d layers.")
 
                                 total_val_loss = (
                                     ori_loss
@@ -612,7 +606,6 @@ class TrainDDP:
                                     + self.coef_maskloss * mask_loss
                                 )
 
-                            # Update meters
                             meter_val_oriloss.update(ori_loss.item(), images.size(0))
                             meter_val_kdloss.update(self.coef_kdloss * kd_loss.item(), images.size(0))
                             meter_val_rcloss.update(self.coef_rcloss * rc_loss.item() / len(feature_list_student), images.size(0))
