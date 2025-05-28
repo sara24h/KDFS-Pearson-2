@@ -436,7 +436,7 @@ class TrainDDP:
 
                         if self.rank == 0:
                             total_conv_layers = sum(1 for _, m in self.student.module.named_modules() if isinstance(m, (nn.Conv2d, SoftMaskedConv2d)))
-                            self.logger.info(f"Total Conv2d and SoftMaskedConv2d layers: {total_conv_layers}, Matched layers: {matched_layers}")
+                            #self.logger.info(f"Total Conv2d and SoftMaskedConv2d layers: {total_conv_layers}, Matched layers: {matched_layers}")
 
                         total_loss = (
                             ori_loss
