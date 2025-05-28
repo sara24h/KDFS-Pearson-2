@@ -28,26 +28,39 @@ class RCLoss(nn.Module):
         return (self.rc(x) - self.rc(y)).pow(2).mean()
 
 def compute_active_filters_correlation(filters, m, threshold=0.7, is_training=True):
+    # بررسی مقادیر نامعتبر
+    if torch.isnan(filters).any() or torch.isinf(filters).any():
+        return torch.tensor(0.0, device=filters.device), torch.tensor([], device=filters.device, dtype=torch.long)
+    if torch.isnan(m).any() or torch.isinf(m).any():
+        return torch.tensor(0.0, device=filters.device), torch.tensor([], device=filters.device, dtype=torch.long)
+    
+    # تنظیم آستانه پویا در حالت آموزش
     if is_training:
-       
+        threshold = min(threshold, torch.max(m).item())  # آستانه پویا
         active_indices = torch.where(m > threshold)[0]
     else:
-   
         active_indices = torch.where(m == 1)[0]
     
     if len(active_indices) < 2:
         return torch.tensor(0.0, device=filters.device), active_indices
     
     active_filters = filters[active_indices]
+    active_filters_flat = active_filters.view(active_filters.size(0), -1) + 1e-8
     
-    correlation_matrix = torch.corrcoef(active_filters.view(active_filters.size(0), -1))
+   
+    var = torch.var(active_filters_flat, dim=1)
+    if (var < 1e-8).any():
+        return torch.tensor(0.0, device=filters.device), active_indices
+    
+    correlation_matrix = torch.corrcoef(active_filters_flat)
+    
+    if torch.isnan(correlation_matrix).any():
+        return torch.tensor(0.0, device=filters.device), active_indices
     
     upper_tri = torch.triu(correlation_matrix, diagonal=1)
-    
     sum_of_squares = torch.sum(torch.pow(upper_tri, 2))
     
     return sum_of_squares, active_indices
-
 
 class MaskLoss(nn.Module):
     def __init__(self, threshold=0.7):
