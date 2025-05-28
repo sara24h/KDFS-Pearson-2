@@ -27,10 +27,16 @@ class RCLoss(nn.Module):
     def forward(self, x, y):
         return (self.rc(x) - self.rc(y)).pow(2).mean()
 
-def compute_active_filters_correlation(filters, m):
-    active_indices = torch.where(m == 1)[0]
-    if len(active_indices) < 2:  
-        return torch.tensor(0.0, device=filters.device)
+def compute_active_filters_correlation(filters, m, threshold=0.7, is_training=True):
+    if is_training:
+       
+        active_indices = torch.where(m > threshold)[0]
+    else:
+   
+        active_indices = torch.where(m == 1)[0]
+    
+    if len(active_indices) < 2:
+        return torch.tensor(0.0, device=filters.device), active_indices
     
     active_filters = filters[active_indices]
     
@@ -40,14 +46,18 @@ def compute_active_filters_correlation(filters, m):
     
     sum_of_squares = torch.sum(torch.pow(upper_tri, 2))
     
-    return sum_of_squares
+    return sum_of_squares, active_indices
+
 
 class MaskLoss(nn.Module):
-    def __init__(self):
+    def __init__(self, threshold=0.7):
         super(MaskLoss, self).__init__()
+        self.threshold = threshold
 
-    def forward(self, filters, mask):
-        return compute_active_filters_correlation(filters, mask)
+    def forward(self, filters, mask, is_training=True):
+        correlation, active_indices = compute_active_filters_correlation(filters, mask, self.threshold, is_training)
+        return correlation, active_indices
+        
 
 class CrossEntropyLabelSmooth(nn.Module):
     def __init__(self, num_classes, epsilon):
