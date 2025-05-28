@@ -27,7 +27,7 @@ class RCLoss(nn.Module):
     def forward(self, x, y):
         return (self.rc(x) - self.rc(y)).pow(2).mean()
 
-def compute_active_filters_correlation(filters, m, threshold=0.7, is_training=True):
+def compute_active_filters_correlation(filters, m, threshold=0.55, is_training=True):
     # بررسی مقادیر نامعتبر
     if torch.isnan(filters).any() or torch.isinf(filters).any():
         return torch.tensor(0.0, device=filters.device), torch.tensor([], device=filters.device, dtype=torch.long)
@@ -36,7 +36,7 @@ def compute_active_filters_correlation(filters, m, threshold=0.7, is_training=Tr
     
     # تنظیم آستانه پویا در حالت آموزش
     if is_training:
-        threshold = min(threshold, torch.max(m).item())  # آستانه پویا
+        threshold = min(threshold, torch.max(m).item()) 
         active_indices = torch.where(m > threshold)[0]
     else:
         active_indices = torch.where(m == 1)[0]
@@ -63,7 +63,7 @@ def compute_active_filters_correlation(filters, m, threshold=0.7, is_training=Tr
     return sum_of_squares, active_indices
 
 class MaskLoss(nn.Module):
-    def __init__(self, threshold=0.7):
+    def __init__(self, threshold=0.55):
         super(MaskLoss, self).__init__()
         self.threshold = threshold
 
