@@ -411,7 +411,7 @@ class TrainDDP:
                         mask_loss = torch.tensor(0.0, device=images.device, dtype=torch.float32)
                         matched_layers = 0
                         if self.rank == 0:
-                        self.logger.info(f"Total mask modules: {len(self.student.module.mask_modules)}")
+                            self.logger.info(f"Total mask modules: {len(self.student.module.mask_modules)}")
 
                         for name, module in self.student.module.named_modules():
                             if isinstance(module, SoftMaskedConv2d): 
