@@ -418,7 +418,7 @@ class TrainDDP:
                                 for mask_module in self.student.module.mask_modules:
                                     if mask_module.mask.shape[0] == filters.shape[0] and mask_module.layer_name == adjusted_name:
                                         m = mask_module.mask
-                                        correlation, active_indices = self.mask_loss(filters, m, is_training=True)
+                                        correlation, active_indices = self.mask_loss(filters, m)
                                         #if self.rank == 0:
                                         #    self.logger.info(f"Layer {name}: {len(active_indices)} active filters, indices={active_indices.tolist()}, correlation={correlation.item()}")
                                         mask_loss += correlation
