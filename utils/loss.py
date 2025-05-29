@@ -27,11 +27,6 @@ class RCLoss(nn.Module):
     def forward(self, x, y):
         return (self.rc(x) - self.rc(y)).pow(2).mean()
 
-import torch
-
-import torch
-import torch.nn as nn
-
 def compute_active_filters_correlation(filters, m):
     if torch.isnan(filters).any() or torch.isinf(filters).any() or torch.isnan(m).any() or torch.isinf(m).any():
         return torch.tensor(0.0, device=filters.device), torch.tensor([], device=filters.device, dtype=torch.long)
@@ -54,7 +49,10 @@ def compute_active_filters_correlation(filters, m):
 
     upper_tri = torch.triu(correlation_matrix, diagonal=1)
     sum_of_squares = torch.sum(torch.pow(upper_tri, 2))
-    return sum_of_squares, active_indices
+
+    num_active_filters = len(active_indices)
+    normalized_correlation = sum_of_squares / num_active_filters
+    return normalized_correlation, active_indices
 
 class MaskLoss(nn.Module):
     def __init__(self):
