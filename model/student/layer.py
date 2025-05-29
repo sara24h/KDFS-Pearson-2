@@ -3,19 +3,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import math
+import copy
+from thop import profile
 
 def sigmoid(x):
     return float(1.0 / (1.0 + np.exp(-x)))
 
 def hard_sigmod(x):
     return torch.min(torch.max(x + 0.5, torch.zeros_like(x)), torch.ones_like(x))
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import copy
-import math
-from thop import profile
 
 class SoftMaskedConv2d(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, bias=True):
