@@ -27,40 +27,54 @@ class RCLoss(nn.Module):
     def forward(self, x, y):
         return (self.rc(x) - self.rc(y)).pow(2).mean()
 
+import torch
+import torch.nn as nn
+
 def compute_active_filters_correlation(filters, m):
-    if torch.isnan(filters).any() or torch.isinf(filters).any() or torch.isnan(m).any() or torch.isinf(m).any():
+    try:
+        if torch.isnan(filters).any() or torch.isinf(filters).any() or torch.isnan(m).any() or torch.isinf(m).any():
+            raise ValueError("Warning! Inputs are Inf or NaN")
+        
+        active_indices = torch.where(m == 1)[0]
+        if len(active_indices) < 2:
+            print("Warning! Number of active filters are less than 2.")
+            return torch.tensor(0.0, device=filters.device), active_indices
+
+        active_filters = filters[active_indices]
+        active_filters_flat = active_filters.view(active_filters.size(0), -1) 
+        var = torch.var(active_filters_flat, dim=1)
+        
+        if (var == 0).any():
+            print("Warning! Variance of one or more active filters is zero.")
+        
+        var = var + 1e-8
+
+        mean = torch.mean(active_filters_flat, dim=1, keepdim=True)
+        centered = active_filters_flat - mean
+        cov = torch.matmul(centered, centered.t()) / (active_filters_flat.size(1) - 1)
+        std_dev = torch.sqrt(var)
+        correlation_matrix = cov / (std_dev[:, None] * std_dev[None, :])
+
+        if torch.isnan(correlation_matrix).any():
+            return torch.tensor(0.0, device=filters.device), active_indices
+
+        upper_tri = torch.triu(correlation_matrix, diagonal=1)
+        sum_of_squares = torch.sum(torch.pow(upper_tri, 2))
+        num_active_filters = len(active_indices)
+        normalized_correlation = sum_of_squares / num_active_filters
+        return normalized_correlation, active_indices
+
+    except ValueError as e:
+        print(f"Error: {e}")
         return torch.tensor(0.0, device=filters.device), torch.tensor([], device=filters.device, dtype=torch.long)
-    
-    active_indices = torch.where(m == 1)[0]
-
-    if len(active_indices) < 2:
-        return torch.tensor(0.0, device=filters.device), active_indices
-
-    active_filters = filters[active_indices]
-    active_filters_flat = active_filters.view(active_filters.size(0), -1) + 1e-8 
-    var = torch.var(active_filters_flat, dim=1)
-    if (var < 1e-8).any():
-        return torch.tensor(0.0, device=filters.device), active_indices
-
-    correlation_matrix = torch.corrcoef(active_filters_flat)
-
-    if torch.isnan(correlation_matrix).any():
-        return torch.tensor(0.0, device=filters.device), active_indices
-
-    upper_tri = torch.triu(correlation_matrix, diagonal=1)
-    sum_of_squares = torch.sum(torch.pow(upper_tri, 2))
-
-    num_active_filters = len(active_indices)
-    normalized_correlation = sum_of_squares / num_active_filters
-    return normalized_correlation, active_indices
 
 class MaskLoss(nn.Module):
     def __init__(self):
         super(MaskLoss, self).__init__()
+    
     def forward(self, filters, mask):
         correlation, active_indices = compute_active_filters_correlation(filters, mask)
         return correlation, active_indices
-        
 
 class CrossEntropyLabelSmooth(nn.Module):
     def __init__(self, num_classes, epsilon):
