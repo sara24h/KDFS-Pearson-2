@@ -49,6 +49,12 @@ def compute_active_filters_correlation(filters, m):
 
     num_active_filters = len(active_indices)
     normalized_correlation = sum_of_squares / num_active_filters
+    
+    with open('correlation_output.txt', 'a') as f:
+        f.write(f"Layer Correlation Matrix:\n{correlation_matrix.numpy()}\n")
+        f.write(f"Normalized Correlation: {normalized_correlation.item()}\n")
+        f.write("-" * 50 + "\n")
+    
     return normalized_correlation, active_indices
 
 class MaskLoss(nn.Module):
@@ -56,7 +62,6 @@ class MaskLoss(nn.Module):
         super(MaskLoss, self).__init__()
     def forward(self, filters, mask):
         correlation, active_indices = compute_active_filters_correlation(filters, mask)
-        return correlation, active_indices
         return correlation, active_indices
 
 class CrossEntropyLabelSmooth(nn.Module):
