@@ -30,6 +30,10 @@ class RCLoss(nn.Module):
 def compute_active_filters_correlation(filters, m):
     if torch.isnan(filters).any() or torch.isinf(filters).any() or torch.isnan(m).any() or torch.isinf(m).any():
         print("Input contains NaN or Inf values. Returning zero correlation and empty indices.")
+
+    print("Mask values:", m)
+    active_indices = torch.where(m == 1)[0]
+    print("Active indices:", active_indices)
     
     active_indices = torch.where(m == 1)[0]
 
