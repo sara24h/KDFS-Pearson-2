@@ -43,7 +43,7 @@ def compute_active_filters_correlation(filters, m):
 
     correlation_matrix = torch.corrcoef(active_filters_flat)
 
-   if torch.isnan(correlation_matrix).any():
+    if torch.isnan(correlation_matrix).any():
         print("Corr matrix is null")
 
     upper_tri = torch.triu(correlation_matrix, diagonal=1)
