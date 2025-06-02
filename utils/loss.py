@@ -27,16 +27,16 @@ class RCLoss(nn.Module):
     def forward(self, x, y):
         return (self.rc(x) - self.rc(y)).pow(2).mean()
 
-
 def compute_active_filters_correlation(filters, m, epsilon=1e-4):
     # بررسی وجود مقادیر NaN یا Inf در فیلترها
     if torch.isnan(filters).any() or torch.isinf(filters).any():
         print("NaN or Inf detected in filters")
+        return None
 
     # بررسی وجود مقادیر NaN یا Inf در ماسک
     if torch.isnan(m).any() or torch.isinf(m).any():
         print("NaN or Inf detected in mask")
-
+        return None
     
     # استخراج ایندکس‌های فیلترهای فعال
     active_indices = torch.where(m == 1)[0]
@@ -44,7 +44,7 @@ def compute_active_filters_correlation(filters, m, epsilon=1e-4):
     
     if num_active_filters < 2:
         print(f"Insufficient active filters: {num_active_filters}")
-
+        return active_indices
 
     # انتخاب فیلترهای فعال
     active_filters = filters[active_indices]
@@ -62,15 +62,15 @@ def compute_active_filters_correlation(filters, m, epsilon=1e-4):
         f.write("Standard Deviations for Each Filter:\n")
         f.write(str(std.tolist()) + "\n\n")
     
-    return None, active_indices
+    return active_indices
 
 class MaskLoss(nn.Module):
     def __init__(self):
         super(MaskLoss, self).__init__()
     
     def forward(self, filters, mask):
-        correlation, active_indices = compute_active_filters_correlation(filters, mask)
-        return correlation, active_indices
+        active_indices = compute_active_filters_correlation(filters, mask)
+        return active_indices
 
 class CrossEntropyLabelSmooth(nn.Module):
     def __init__(self, num_classes, epsilon):
