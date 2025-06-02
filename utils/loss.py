@@ -33,15 +33,15 @@ def compute_active_filters_correlation(filters, m):
     nan_count = 0
     
     if torch.isnan(filters).any() or torch.isinf(filters).any() or torch.isnan(m).any() or torch.isinf(m).any():
-        return torch.tensor(0.0, device=filters.device), torch.tensor([], device=filters.device, dtype=torch.long), nan_count
+        return torch.tensor(0.0, device=filters.device), torch.tensor([], device=filters.device, dtype=torch.long)
     
     active_indices = torch.where(m == 1)[0]
 
     if len(active_indices) < 2:
-        return torch.tensor(0.0, device=filters.device), active_indices, nan_count
+        return torch.tensor(0.0, device=filters.device), active_indices
 
     active_filters = filters[active_indices]
-    active_filters_flat = active_filters.view(active_filters.size(0), -1) + 1e-8 
+    active_filters_flat = active_filters.view(active_filters.size(0), -1)
     
     correlation_matrix = torch.corrcoef(active_filters_flat)
     # Check for NaN in correlation matrix and increment counter if True
