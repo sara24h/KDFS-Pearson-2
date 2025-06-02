@@ -1,8 +1,8 @@
-python
 import json
 import os
 import random
 import time
+from datetime import datetime
 import numpy as np
 import torch
 import torch.nn as nn
@@ -14,6 +14,7 @@ from torch.cuda.amp import autocast, GradScaler
 from data.dataset import Dataset_selector
 from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k
 from utils import utils, loss, meter, scheduler
+from thop import profile
 from model.teacher.ResNet import ResNet_50_hardfakevsreal
 
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
@@ -25,7 +26,6 @@ Flops_baselines = {
         "140k": 5390.0,
     }
 }
-
 
 class TrainDDP:
     def __init__(self, args):
@@ -61,11 +61,10 @@ class TrainDDP:
         self.world_size = 0
         self.local_rank = -1
         self.rank = -1
-        self.nan_counter = {}
 
         if self.dataset_mode == "hardfake":
             self.args.dataset_type = "hardfakevsrealfaces"
-            self.num_classes = 1
+            self.num_classes = 1  # Changed to 1 for binary classification
             self.image_size = 300
         elif self.dataset_mode == "rvf10k":
             self.args.dataset_type = "rvf10k"
@@ -139,7 +138,7 @@ class TrainDDP:
             realfake140k_valid_csv = None
             realfake140k_test_csv = None
             realfake140k_root_dir = None
-        else:
+        else:  # dataset_mode == '140k'
             hardfake_csv_file = None
             hardfake_root_dir = None
             rvf10k_train_csv = None
@@ -226,7 +225,7 @@ class TrainDDP:
                 gumbel_end_temperature=self.gumbel_end_temperature,
                 num_epochs=self.num_epochs,
             )
-        else:
+        else:  # rvf10k or 140k
             self.student = ResNet_50_sparse_rvf10k(
                 gumbel_start_temperature=self.gumbel_start_temperature,
                 gumbel_end_temperature=self.gumbel_end_temperature,
@@ -234,7 +233,7 @@ class TrainDDP:
             )
         self.student.dataset_type = self.args.dataset_type
         num_ftrs = self.student.fc.in_features
-        self.student.fc = nn.Linear(num_ftrs, 1)
+        self.student.fc = nn.Linear(num_ftrs, 1)  # Ensure output is 1 for binary classification
         self.student = self.student.cuda()
         self.student = DDP(self.student, device_ids=[self.local_rank])
 
@@ -242,7 +241,7 @@ class TrainDDP:
         self.ori_loss = nn.BCEWithLogitsLoss().cuda()
         self.kd_loss = loss.KDLoss().cuda()
         self.rc_loss = loss.RCLoss().cuda()
-        self.mask_loss = MaskLoss().cuda()
+        self.mask_loss = loss.MaskLoss().cuda()
 
     def define_optim(self):
         weight_params = map(
@@ -273,28 +272,32 @@ class TrainDDP:
             warmup_steps=self.warmup_steps,
             warmup_start_lr=self.warmup_start_lr,
         )
-        self.scheduler_mask = scheduler.CosineAnnealingLRWarmup(
+        self.scheduler_student_mask = scheduler.CosineAnnealingLRWarmup(
             self.optim_mask,
             T_max=self.lr_decay_T_max,
-            eta_min=0,
+            eta_min=self.lr_decay_eta_min,
             last_epoch=-1,
             warmup_steps=self.warmup_steps,
             warmup_start_lr=self.warmup_start_lr,
-            )
+        )
 
-    def resume_student(self):
+    def resume_student_ckpt(self):
         if not os.path.exists(self.resume):
             raise FileNotFoundError(f"Checkpoint file not found: {self.resume}")
-        ckpt = torch.load(self.resume, map_location="cpu", weights_only=True)
-        self.best_precision = ckpt["best_precision"]
-        self.start_epoch = ckpt["start_epoch"]
-        self.student.module.load_state_dict(ckpt["model_state_dict"])
-        self.optim_weight.load_state_dict(ckpt["optim_weight"])
-        self.optim_mask.load_state_dict(ckpt["mask_state_dict"])
-        self.scheduler_student_weight.load_state_dict(ckpt["scheduler_weight"])
-        self.scheduler_mask.load_state_dict(ckpt["scheduler_mask"])
+        ckpt_student = torch.load(self.resume, map_location="cpu", weights_only=True)
+        self.best_prec1 = ckpt_student["best_prec1"]
+        self.start_epoch = ckpt_student["start_epoch"]
+        self.student.module.load_state_dict(ckpt_student["student"])
+        self.optim_weight.load_state_dict(ckpt_student["optim_weight"])
+        self.optim_mask.load_state_dict(ckpt_student["optim_mask"])
+        self.scheduler_student_weight.load_state_dict(
+            ckpt_student["scheduler_student_weight"]
+        )
+        self.scheduler_student_mask.load_state_dict(
+            ckpt_student["scheduler_student_mask"]
+        )
         if self.rank == 0:
-            self.logger.info(f"Resumed training from epoch {self.start_epoch + 1}")
+            self.logger.info("=> Continue from epoch {}...".format(self.start_epoch + 1))
 
     def save_student_ckpt(self, is_best, epoch):
         if self.rank == 0:
@@ -302,19 +305,25 @@ class TrainDDP:
             if not os.path.exists(folder):
                 os.makedirs(folder)
 
-            ckpt = {
-                "best_precision": self.best_precision,
-                "start_epoch": epoch,
-                "model_state_dict": self.student.module.state_dict(),
-                "optim_weight": self.optim_weight.state_dict(),
-                "optim_mask": self.optim_mask.state_dict(),
-                "scheduler_weight": self.scheduler_weight.state_dict(),
-                "scheduler_mask": self.scheduler_mask.state_dict(),
-            }
+            ckpt_student = {}
+            ckpt_student["best_prec1"] = self.best_prec1
+            ckpt_student["start_epoch"] = epoch
+            ckpt_student["student"] = self.student.module.state_dict()
+            ckpt_student["optim_weight"] = self.optim_weight.state_dict()
+            ckpt_student["optim_mask"] = self.optim_mask.state_dict()
+            ckpt_student[
+                "scheduler_student_weight"
+            ] = self.scheduler_student_weight.state_dict()
+            ckpt_student[
+                "scheduler_student_mask"
+            ] = self.scheduler_student_mask.state_dict()
 
             if is_best:
-                torch.save(ckpt, os.path.join(folder, f"{self.arch}_sparse_best.pt"))
-            torch.save(ckpt, os.path.join(folder, f"{self.arch}_sparse_last.pt"))
+                torch.save(
+                    ckpt_student,
+                    os.path.join(folder, self.arch + "_sparse_best.pt"),
+                )
+            torch.save(ckpt_student, os.path.join(folder, self.arch + "_sparse_last.pt"))
 
     def reduce_tensor(self, tensor):
         rt = tensor.clone()
@@ -331,22 +340,20 @@ class TrainDDP:
         scaler = GradScaler()
 
         if self.resume:
-            self.resume_student()
+            self.resume_student_ckpt()
 
-        epoch_nan_counter = {}
         if self.rank == 0:
-            meter_oriloss = meter.AverageMeter("OriLoss", ":.4f")
-            meter_kdloss = meter.AverageMeter("KDLoss", ":.4f")
-            meter_rcloss = meter.AverageMeter("RCLoss", ":.4f")
-            meter_maskloss = meter.AverageMeter("MaskLoss", ":.6f")
-            meter_loss = meter.AverageMeter("Loss", ":.4f")
+            meter_oriloss = meter.AverageMeter("OriLoss", ":.4e")
+            meter_kdloss = meter.AverageMeter("KDLoss", ":.4e")
+            meter_rcloss = meter.AverageMeter("RCLoss", ":.4e")
+            meter_maskloss = meter.AverageMeter("MaskLoss", ":.6e")
+            meter_loss = meter.AverageMeter("Loss", ":.4e")
             meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
 
-        for epoch in range(self.start_epoch, +1, self.num_epochs + 1):
+        for epoch in range(self.start_epoch + 1, self.num_epochs + 1):
             self.train_loader.sampler.set_epoch(epoch)
             self.student.train()
             self.student.module.ticket = False
-            epoch_nan_counter.clear()  # Reset per-layer counter for new epoch
             if self.rank == 0:
                 meter_oriloss.reset()
                 meter_kdloss.reset()
@@ -355,16 +362,15 @@ class TrainDDP:
                 meter_loss.reset()
                 meter_top1.reset()
                 lr = (
-                    self.optim_weight.state_dict()[["param_groups"][0]["lr"]
+                    self.optim_weight.state_dict()["param_groups"][0]["lr"]
                     if epoch > 1
-                    else
-                    self.warmup_start_lr
+                    else self.warmup_start_lr
                 )
 
             self.student.module.update_gumbel_temperature(epoch)
-            with tqdm(total=len(self.train_loader), ncols=100, disable=self.rank, != 0) as _tqdm:
+            with tqdm(total=len(self.train_loader), ncols=100, disable=self.rank != 0) as _tqdm:
                 if self.rank == 0:
-                    _tqdm.set_description(f"Epoch [{epoch}/{self.num_epochs}]")
+                    _tqdm.set_description("epoch: {}/{}".format(epoch, self.num_epochs))
                 for images, targets in self.train_loader:
                     self.optim_weight.zero_grad()
                     self.optim_mask.zero_grad()
@@ -373,8 +379,8 @@ class TrainDDP:
 
                     if torch.isnan(images).any() or torch.isinf(images).any() or torch.isnan(targets).any() or torch.isinf(targets).any():
                         if self.rank == 0:
-                            self.logger.info("Invalid input detected (NaN or Inf)")
-                            continue
+                            self.logger.warning("Invalid input detected (NaN or Inf)")
+                        continue
 
                     with autocast():
                         logits_student, feature_list_student = self.student(images)
@@ -393,199 +399,204 @@ class TrainDDP:
 
                         rc_loss = torch.tensor(0.0, device=images.device, dtype=torch.float32)
                         for i in range(len(feature_list_student)):
-                            rc_loss += self.rc_loss(
-                                feature_list_student[i],
-                                feature_list_teacher[i]
+                            rc_loss = rc_loss + self.rc_loss(
+                                feature_list_student[i], feature_list_teacher[i]
                             )
 
-                        from model.student.ResNet import SoftMasked
-                            mask_loss = torch.tensor(0.0, device=torch.device, dtype=torch.float32)
-                            matched_layers = 0
-                        for name, module in self.student.named_modules():
-                            if isinstance(module, SoftMasked):
+                        from model.student.ResNet_sparse import SoftMaskedConv2d
+
+                        mask_loss = torch.tensor(0.0, device=images.device, dtype=torch.float32)
+                        matched_layers = 0
+                        #if self.rank == 0:
+                           # self.logger.info(f"Total mask modules: {len(self.student.module.mask_modules)}")
+
+                        for name, module in self.student.module.named_modules():
+                            if isinstance(module, SoftMaskedConv2d):
                                 filters = module.weight
                                 found = False
-                                adjusted_name = name.replace("module.", "_")
-                                for mask_module, _ in self.student.module.mask_modules:
-                                    if mask.shape[0] == filters.shape[0] and mask_module.layer_name == adjusted_name:
-                                        mask = mask_module.mask
-                                        correlation, active_indices = self.mask_loss(filters, mask, epoch_nan_counter, adjusted_name)
-                                        mask_loss += (correlation)
+                                adjusted_name = name.replace("module.", "") 
+                                for mask_module in self.student.module.mask_modules:
+                                    if mask_module.mask.shape[0] == filters.shape[0] and mask_module.layer_name == adjusted_name:
+                                        m = mask_module.mask
+                                        correlation, active_indices = self.mask_loss(filters, m)
+                                        #if self.rank == 0:
+                                        #    self.logger.info(f"Layer {name}: {len(active_indices)} active filters, indices={active_indices.tolist()}, correlation={correlation.item()}")
+                                        mask_loss += correlation
                                         found = True
-                                        matched_layers += = 1
+                                        matched_layers += 1
                                         break
                                 if not found and self.rank == 0:
-                                    self.logger.warning(f"No mask found for layer {name} ({adjusted_name})")
+                                    self.logger.warning(f"No mask found for layer {name} (adjusted: {adjusted_name})")
 
-                            if matched_layers > 0:
-                                mask_loss = / matched_layers
-                            else:
-                                if self.rank == 0:
-                                    self.logger.warning("No layers matched for mask calculation")
+                        if matched_layers > 0:
+                            mask_loss = mask_loss / matched_layers
+                        else:
+                            if self.rank == 0:
+                                self.logger.warning("No layers matched for mask loss calculation.")
+
+                        if self.rank == 0:
+                            total_conv_layers = sum(1 for _, m in self.student.module.named_modules() if isinstance(m, (nn.Conv2d, SoftMaskedConv2d)))
+                            #self.logger.info(f"Total Conv2d and SoftMaskedConv2d layers: {total_conv_layers}, Matched layers: {matched_layers}")
 
                         total_loss = (
-                            "ori_loss"
+                            ori_loss
                             + self.coef_kdloss * kd_loss
                             + self.coef_rcloss * rc_loss / len(feature_list_student)
                             + self.coef_maskloss * mask_loss
                         )
 
                     scaler.scale(total_loss).backward()
-                    torch.nn.utils.clip_grad_norm_(self.student.parameters(), max_norm=1.0))
                     scaler.step(self.optim_weight)
                     scaler.step(self.optim_mask)
                     scaler.update()
 
                     preds = (torch.sigmoid(logits_student) > 0.5).float()
-                    correct = (preds == targets).sum().sum()
-                    prec1 = correct * 100 / images.size(0)
+                    correct = (preds == targets).sum().item()
+                    prec1 = 100. * correct / images.size(0)
 
                     dist.barrier()
-                    reduced_oriloss = self.reduce_tensor(oriloss)
-                    reduced_kdloss = self.reduce_tensor(kd_loss)
-                    reduced_rcloss = self.reduce_tensor(rc_loss)
-                    reduced_maskloss = self.reduce_tensor(mask_loss)
-                    reduced_totalloss = self.reduce_tensor(total_loss)
+                    reduced_ori_loss = self.reduce_tensor(ori_loss)
+                    reduced_kd_loss = self.reduce_tensor(kd_loss)
+                    reduced_rc_loss = self.reduce_tensor(rc_loss)
+                    reduced_mask_loss = self.reduce_tensor(mask_loss)
+                    reduced_total_loss = self.reduce_tensor(total_loss)
                     reduced_prec1 = self.reduce_tensor(torch.tensor(prec1).cuda())
 
                     if self.rank == 0:
                         n = images.size(0)
-                        meter_oriloss.update(reduced_oriloss.item(), n)
-                            meter_kdloss.update(self.coef_kdloss * reduced_kdloss.item(), n)
-                            meter_rcloss.update(self.coef_rcloss * reduced_rcloss.item() / len(feature_list_student), n)
-                            meter_maskloss.update(reduced_maskloss.item(), n)
-                            meter_loss.update(reduced_totalloss.item(), n)
-                            meter_top1.update(reduced_top1.item(), n)
+                        meter_oriloss.update(reduced_ori_loss.item(), n)
+                        meter_kdloss.update(self.coef_kdloss * reduced_kd_loss.item(), n)
+                        meter_rcloss.update(
+                            self.coef_rcloss * reduced_rc_loss.item() / len(feature_list_student), n
+                        )
+                        meter_maskloss.update(self.coef_maskloss * reduced_mask_loss.item(), n)
+                        meter_loss.update(reduced_total_loss.item(), n)
+                        meter_top1.update(reduced_prec1.item(), n)
 
                         _tqdm.set_postfix(
-                            loss=f"{meter_loss.avg:.4f}",
-                            train_acc=f"{meter_top1.avg:.2f}"
+                            loss="{:.4f}".format(meter_loss.avg),
+                            train_acc="{:.4f}".format(meter_top1.avg),
                         )
                         _tqdm.update(1)
 
                     time.sleep(0.01)
 
-                self.scheduler.step()
-            self.scheduler_mask.step()
+            self.scheduler_student_weight.step()
+            self.scheduler_student_mask.step()
 
             if self.rank == 0:
                 Flops = self.student.module.get_flops()
                 self.writer.add_scalar("train/loss/ori_loss", meter_oriloss.avg, global_step=epoch)
-                self.writer.add_scalar("loss/kdloss", meter_kdloss.avg, global_step=epoch)
-                self.writer.add_scalar("loss_rcloss", meter_rcloss.avg, global_step=epoch)
-                self.writer.add_scalar("loss_maskloss", meter_maskloss.avg, global_step=epoch)
-                self.writer.add_scalar("loss_total/loss", meter_loss.avg, global_step=epoch)
-                self.writer.add_scalar("train_acc/top1", meter_top1.avg, global_step=epoch)
-                self.writer.add_scalar("train_lr/lr", lr, global_step=epoch)
-                self.writer.add_scalar(
-                    "train/gumbel_temperature",
-                    self.student.module.gumbel_temperature,
-                    global_step=epoch
-                )
-                self.writer.add_scalar("train/flops", Flops, global_step=epoch)
-
-                # Log per-layer NaN counts
-                for layer_name, count in epoch_nan_counter.items():
-                    self.writer.add_scalar(f"nan_count/{layer_name}", count, epoch)
-                    self.logger.info(f"[Epoch {epoch}] NaN count in layer {layer_name}: {count}")
-
-                # Update global NaN counter
-                for layer_name, count in epoch_nan_counter.items():
-                    self.nan_counter[layer_name] = self.nan_counter.get(layer_name, 0) + count
+                self.writer.add_scalar("train/loss/kd_loss", meter_kdloss.avg, global_step=epoch)
+                self.writer.add_scalar("train/loss/rc_loss", meter_rcloss.avg, global_step=epoch)
+                self.writer.add_scalar("train/loss/mask_loss", meter_maskloss.avg, global_step=epoch)
+                self.writer.add_scalar("train/loss/total_loss", meter_loss.avg, global_step=epoch)
+                self.writer.add_scalar("train/acc/top1", meter_top1.avg, global_step=epoch)
+                self.writer.add_scalar("train/lr/lr", lr, global_step=epoch)
+                self.writer.add_scalar("train/temperature/gumbel_temperature", self.student.module.gumbel_temperature, global_step=epoch)
+                self.writer.add_scalar("train/Flops", Flops, global_step=epoch)
 
                 self.logger.info(
-                    f"[Train] "
-                    f"Epoch {epoch} "
-                    f"Gumbel_temperature: {self.student.module.gumbel_temperature:.2f} "
-                    f"LR: {lr:.6f} "
-                    f"OriLoss: {meter_oriloss.avg:.4f} "
-                    f"KDLoss: {meter_kdloss.avg:.4f} "
-                    f"RCLoss: {meter_rcloss.avg:.4f} "
-                    f"MaskLoss: {meter_maskloss.avg:.6f} "
-                    f"TotalLoss: {meter_loss.avg:.4f} "
-                    f"Train_Acc: {meter_top1.avg:.2f}"
-                )
-
-                self.logger.info(
-                    f"[Train] Total NaN counts per layer so far: {dict(self.nan_counter)})"
+                    "[Train] "
+                    "Epoch {0} : "
+                    "Gumbel_temperature {gumbel_temperature:.2f} "
+                    "LR {lr:.6f} "
+                    "OriLoss {ori_loss:.4f} "
+                    "KDLoss {kd_loss:.4f} "
+                    "RCLoss {rc_loss:.4f} "
+                    "MaskLoss {mask_loss:.6f} "
+                    "TotalLoss {total_loss:.4f} "
+                    "Train_Acc {train_acc:.2f}".format(
+                        epoch,
+                        gumbel_temperature=self.student.module.gumbel_temperature,
+                        lr=lr,
+                        ori_loss=meter_oriloss.avg,
+                        kd_loss=meter_kdloss.avg,
+                        rc_loss=meter_rcloss.avg,
+                        mask_loss=meter_maskloss.avg,
+                        total_loss=meter_loss.avg,
+                        train_acc=meter_top1.avg,
                     )
+                )
 
-                masks = [
-                    round(m.mask.mean().item(), 2)
-                    for _, m in enumerate(self.student.module.mask_modules)
-                ]
-                self.logger.info(f"[Train mask avg] Epoch {epoch}: {masks}")
+                masks = []
+                for _, m in enumerate(self.student.module.mask_modules):
+                    masks.append(round(m.mask.mean().item(), 2))
+                self.logger.info("[Train mask avg] Epoch {0} : ".format(epoch) + str(masks))
 
                 self.logger.info(
-                    f"[Train model Flops] Epoch {epoch}: {Flops.item() / (10**6):.1f}M"
+                    "[Train model Flops] Epoch {0} : ".format(epoch)
+                    + str(Flops.item() / (10**6))
+                    + "M"
                 )
 
             # Validation
-            if self.rank == 0':
+            if self.rank == 0:
                 self.student.eval()
-                self.student.module.ticket = True
+                self.student.module.ticket = True  # Enable binary mask
                 meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
 
                 with torch.no_grad():
-                    with tqdm(total=len(self.val_loader), ncols=100) as t:
-                        t.set_description(f"Validation epoch {epoch}/{self.num_epochs}")
+                    with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
+                        _tqdm.set_description("Validation epoch: {}/{}".format(epoch, self.num_epochs))
                         for images, targets in self.val_loader:
                             images = images.cuda()
                             targets = targets.cuda().float()
 
                             if torch.isnan(images).any() or torch.isinf(images).any() or torch.isnan(targets).any() or torch.isinf(targets).any():
-                                self.logger.info("Invalid input detected in validation (NaN or Inf)")
+                                self.logger.warning("Invalid input detected in validation (NaN or Inf)")
                                 continue
 
                             logits_student, _ = self.student(images)
-                            logits_student = logits_student.squeeze()
+                            logits_student = logits_student.squeeze(1)
                             preds = (torch.sigmoid(logits_student) > 0.5).float()
                             correct = (preds == targets).sum().item()
                             prec1 = 100. * correct / images.size(0)
                             n = images.size(0)
                             meter_top1.update(prec1, n)
 
-                            t.set_postfix(
-                                val_acc=f"{meter_top1.avg:.4f}"
+                            _tqdm.set_postfix(
+                                val_acc="{:.4f}".format(meter_top1.avg),
                             )
-                            t.update(1)
+                            _tqdm.update(1)
                             time.sleep(0.01)
 
                 Flops = self.student.module.get_flops()
                 self.writer.add_scalar("val/acc/top1", meter_top1.avg, global_step=epoch)
-                self.writer.add_scalar("val/flops", Flops, global_step=epoch)
+                self.writer.add_scalar("val/Flops", Flops, global_step=epoch)
 
                 self.logger.info(
-                    f"[Val] "
-                    f"Epoch {epoch} "
-                    f"Val_Acc: {meter_top1.avg:.2f}"
+                    "[Val] "
+                    "Epoch {0} : "
+                    "Val_Acc {val_acc:.2f}".format(
+                        epoch,
+                        val_acc=meter_top1.avg,
+                    )
                 )
 
-                masks = [
-                    round(m.mask.mean().item(), 2)
-                    for _, m in enumerate(self.student.module.mask_modules)
-                ]
-                self.logger.info(f"[Val mask avg] Epoch {epoch}: {masks}")
+                masks = []
+                for _, m in enumerate(self.student.module.mask_modules):
+                    masks.append(round(m.mask.mean().item(), 2))
+                self.logger.info("[Val mask avg] Epoch {0} : ".format(epoch) + str(masks))
 
                 self.logger.info(
-                    f"[Val model Flops] Epoch {epoch}: {Flops.item() / (10**6):.1f}M"
+                    "[Val model Flops] Epoch {0} : ".format(epoch)
+                    + str(Flops.item() / (10**6))
+                    + "M"
                 )
 
                 if self.best_prec1 < meter_top1.avg:
                     self.best_prec1 = meter_top1.avg
-                    self.save_student(True, epoch)
+                    self.save_student_ckpt(True, epoch)
                 else:
-                    self.save_student(False, epoch)
+                    self.save_student_ckpt(False, epoch)
 
                 self.logger.info(
-                    f" => Best top1 accuracy on validation: {self.best_prec1:.2f}"
+                    " => Best top1 accuracy on validation before finetune : " + str(self.best_prec1)
                 )
 
         if self.rank == 0:
-            self.logger.info("Training finished!")
-            self.logger.info(
-                f"[Final] Total NaN counts in correlation_matrix across all layers: {dict(self.nan_counter)}"
-                )
+            self.logger.info("Train finished!")
 
     def main(self):
         self.dist_init()
