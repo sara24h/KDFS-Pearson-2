@@ -28,51 +28,77 @@ class RCLoss(nn.Module):
         return (self.rc(x) - self.rc(y)).pow(2).mean()
 
 
-def compute_active_filters_correlation(filters, m):
-    # Initialize a counter for NaN occurrences in correlation matrix
-    nan_count = 0
-    
-    if torch.isnan(filters).any() or torch.isinf(filters).any() or torch.isnan(m).any() or torch.isinf(m).any():
-        return torch.tensor(0.0, device=filters.device), torch.tensor([], device=filters.device, dtype=torch.long)
-    
+import torch
+
+def compute_active_filters_correlation(filters, m, layer_idx, global_step, epsilon=1e-4):
+    # بررسی وجود مقادیر NaN یا Inf در فیلترها
+    if torch.isnan(filters).any() or torch.isinf(filters).any():
+        print(f"Step: {global_step}, Layer: {layer_idx}, NaN or Inf detected in filters")
+
+
+    # بررسی وجود مقادیر NaN یا Inf در ماسک
+    if torch.isnan(m).any() or torch.isinf(m).any():
+        print(f"Step: {global_step}, Layer: {layer_idx}, NaN or Inf detected in mask")
+     
+
+    # استخراج ایندکس‌های فیلترهای فعال
     active_indices = torch.where(m == 1)[0]
+    num_active_filters = len(active_indices)
+    
+    if num_active_filters < 2:
+        print(f"Step: {global_step}, Layer: {layer_idx}, Insufficient active filters: {num_active_filters}")
+        return None, active_indices
 
-    if len(active_indices) < 2:
-        return torch.tensor(0.0, device=filters.device), active_indices
-
+    # انتخاب فیلترهای فعال
     active_filters = filters[active_indices]
-    active_filters_flat = active_filters.view(active_filters.size(0), -1)
+    active_filters_flat = active_filters.view(num_active_filters, -1)
+    
+    # ذخیره مقادیر فیلترهای فعال در فایل
+    with open(f'active_filters_flat_layer_{layer_idx}.txt', 'a') as f:
+        f.write(f"Step: {global_step}, Layer: {layer_idx}\n")
+        f.write("Active Filters Flat Values:\n")
+        f.write(str(active_filters_flat.tolist()) + "\n\n")
+    
+    # بررسی وجود NaN یا Inf در فیلترهای فعال
+    if torch.isnan(active_filters_flat).any() or torch.isinf(active_filters_flat).any():
+        print(f"Step: {global_step}, Layer: {layer_idx}, NaN or Inf in active filters")
+        return None, active_indices
+    
+    # محاسبه انحراف معیار
+    std = torch.std(active_filters_flat, dim=1)
+    
+    # بررسی انحراف معیار صفر یا نزدیک به صفر
+    if std.eq(0).any() or (std < 1e-5).any():
+        print(f"Step: {global_step}, Layer: {layer_idx}, Zero or near-zero standard deviation detected, adding noise to filters")
     
     correlation_matrix = torch.corrcoef(active_filters_flat)
-    # Check for NaN in correlation matrix and increment counter if True
-    if torch.isnan(correlation_matrix).any():
-        nan_count += 1
-        return torch.tensor(0.0, device=filters.device), active_indices, nan_count
-
+    
+    # بررسی وجود NaN یا Inf در ماتریس همبستگی
+    if torch.isnan(correlation_matrix).any() or torch.isinf(correlation_matrix).any():
+        print(f"Step: {global_step}, Layer: {layer_idx}, NaN or Inf detected in correlation matrix")
+        return None, active_indices
+    
+    # ذخیره ماتریس همبستگی در فایل متنی
+    with open(f'correlation_matrix_layer_{layer_idx}.txt', 'a') as f:
+        f.write(f"Step: {global_step}, Layer: {layer_idx}\n")
+        f.write("Pearson Correlation Matrix:\n")
+        f.write(str(correlation_matrix.tolist()) + "\n\n")
+    
+    # محاسبه مقدار نرمال‌شده همبستگی
     upper_tri = torch.triu(correlation_matrix, diagonal=1)
     sum_of_squares = torch.sum(torch.pow(upper_tri, 2))
-
-    num_active_filters = len(active_indices)
     normalized_correlation = sum_of_squares / num_active_filters
-    return normalized_correlation, active_indices, nan_count
+    
+    return normalized_correlation, active_indices
 
 class MaskLoss(nn.Module):
     def __init__(self):
         super(MaskLoss, self).__init__()
-        self.nan_count_total = 0  # Track total NaN occurrences across calls
-
+    
     def forward(self, filters, mask):
-        correlation, active_indices, nan_count = compute_active_filters_correlation(filters, mask)
-        self.nan_count_total += nan_count  # Accumulate NaN occurrences
-
-        if nan_count > 0:
-            print(f"[MaskLoss] NaN detected in correlation matrix! Count in this step: {nan_count}")
-        print(f"[MaskLoss] Total NaN count so far: {self.nan_count_total}")
-        
+        correlation, active_indices = compute_active_filters_correlation(filters, mask)
         return correlation, active_indices
 
-    def get_nan_count(self):
-        return self.nan_count_total
 
 class CrossEntropyLabelSmooth(nn.Module):
     def __init__(self, num_classes, epsilon):
