@@ -27,46 +27,59 @@ class RCLoss(nn.Module):
     def forward(self, x, y):
         return (self.rc(x) - self.rc(y)).pow(2).mean()
 
-def compute_active_filters_correlation(filters, m, epsilon=1e-4):
+def compute_active_filters_correlation(filters, m, epsilon=1e-3, global_step=0):
+    # بررسی nan یا inf در ورودی‌ها
     if torch.isnan(filters).any() or torch.isinf(filters).any():
-        print("Step: <global_step>, NaN or Inf detected in filters")
-        
+        print(f"Step: {global_step}, NaN or Inf detected in filters")
+         
     if torch.isnan(m).any() or torch.isinf(m).any():
-        print("Step: <global_step>, NaN or Inf detected in mask")
+        print(f"Step: {global_step}, NaN or Inf detected in mask")
 
     active_indices = torch.where(m == 1)[0]
     num_active_filters = len(active_indices)
     
-    if num_active_filters < 2:
-        print(f"Step: <global_step>, Insufficient active filters: {num_active_filters}")
-      
+    if num_active_filters < 2:  # حداقل 5 فیلتر برای پایداری
+        print(f"Step: {global_step}, Insufficient active filters: {num_active_filters}")
+
     active_filters = filters[active_indices]
     active_filters_flat = active_filters.view(num_active_filters, -1)
 
     if torch.isnan(active_filters_flat).any() or torch.isinf(active_filters_flat).any():
-        print("Step: <global_step>, NaN or Inf in active filters")
-    
+        print(f"Step: {global_step}, NaN or Inf in active filters")
+
     std = torch.std(active_filters_flat, dim=1)
     if std.eq(0).any() or (std < 1e-5).any():
-        print("Step: <global_step>, Zero or near-zero standard deviation detected, adding noise to filters")
+        print(f"Step: {global_step}, Zero or near-zero standard deviation detected, adding noise to filters")
         active_filters_flat += torch.randn_like(active_filters_flat) * epsilon
     
+    # محاسبه ماتریس همبستگی
     correlation_matrix = torch.corrcoef(active_filters_flat)
-
+    
+    # بررسی nan یا inf در ماتریس همبستگی
+    if torch.isnan(correlation_matrix).any() or torch.isinf(correlation_matrix).any():
+        print(f"Step: {global_step}, NaN or Inf detected in correlation_matrix")
+    
+    # محاسبه مجموع مربعات مقادیر بالای مثلثی
     upper_tri = torch.triu(correlation_matrix, diagonal=1)
     sum_of_squares = torch.sum(torch.pow(upper_tri, 2))
+    
+    # نرمال‌سازی
     normalized_correlation = sum_of_squares / num_active_filters
     
+    # بررسی nan یا inf در خروجی نهایی
+    if torch.isnan(normalized_correlation) or torch.isinf(normalized_correlation):
+        print(f"Step: {global_step}, NaN or Inf detected in normalized_correlation")
+    
     return normalized_correlation, active_indices
+
 
 class MaskLoss(nn.Module):
     def __init__(self):
         super(MaskLoss, self).__init__()
     
-    def forward(self, filters, mask):
-        correlation, active_indices = compute_active_filters_correlation(filters, mask)
+    def forward(self, filters, mask, global_step=0):
+        correlation, active_indices = compute_active_filters_correlation(filters, mask, global_step=global_step)
         return correlation, active_indices
-
 
 class CrossEntropyLabelSmooth(nn.Module):
     def __init__(self, num_classes, epsilon):
