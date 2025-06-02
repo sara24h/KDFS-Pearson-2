@@ -28,9 +28,7 @@ class RCLoss(nn.Module):
         return (self.rc(x) - self.rc(y)).pow(2).mean()
 
 
-
 def compute_active_filters_correlation(filters, m):
-
     if torch.isnan(filters).any() or torch.isinf(filters).any():
         print("Step: <global_step>, NaN or Inf detected in filters")
         return torch.tensor(float('nan'), device=filters.device), torch.tensor([], device=filters.device, dtype=torch.long)
@@ -42,7 +40,6 @@ def compute_active_filters_correlation(filters, m):
     active_indices = torch.where(m == 1)[0]
     num_active_filters = len(active_indices)
     
-
     if num_active_filters < 2:
         print("Step: <global_step>, Insufficient active filters: {}".format(num_active_filters))
         return torch.tensor(float('nan'), device=filters.device), active_indices
@@ -55,11 +52,11 @@ def compute_active_filters_correlation(filters, m):
         print("Step: <global_step>, Zero or near-zero standard deviation in active_filters_flat")
         return torch.tensor(float('nan'), device=filters.device), active_indices
     
-# محاسبه تفاوت بین تمام جفت‌های فیلتر به صورت ماتریسی
+    # محاسبه تفاوت بین تمام جفت‌های فیلتر به صورت ماتریسی
     diff = active_filters_flat.unsqueeze(1) - active_filters_flat.unsqueeze(0)  # شکل: (n, n, d)
     norm_diff = torch.norm(diff, dim=2)  # شکل: (n, n)
-# بررسی جفت‌های بالای قطر اصلی
-    mask = torch.triu(torch.ones(n, n, device=filters.device), diagonal=1).bool()
+    # بررسی جفت‌های بالای قطر اصلی
+    mask = torch.triu(torch.ones(num_active_filters, num_active_filters, device=filters.device), diagonal=1).bool()
     identical_pairs = (norm_diff < 1e-6) & mask
     if identical_pairs.any():
         print("Step: <global_step>, Identical or near-identical filters detected")
