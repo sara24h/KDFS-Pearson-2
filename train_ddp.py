@@ -62,6 +62,7 @@ class TrainDDP:
         self.world_size = 0
         self.local_rank = -1
         self.rank = -1
+        self.nan_counter = [0]
 
         if self.dataset_mode == "hardfake":
             self.args.dataset_type = "hardfakevsrealfaces"
