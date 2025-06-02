@@ -27,52 +27,33 @@ class RCLoss(nn.Module):
     def forward(self, x, y):
         return (self.rc(x) - self.rc(y)).pow(2).mean()
 
-
-def compute_active_filters_correlation(filters, m, epsilon=1e-4):
-    if torch.isnan(filters).any() or torch.isinf(filters).any():
-        print("Step: <global_step>, NaN or Inf detected in filters")
-        
-    if torch.isnan(m).any() or torch.isinf(m).any():
-        print("Step: <global_step>, NaN or Inf detected in mask")
-
+def compute_active_filters_correlation(filters, m):
+    if torch.isnan(filters).any() or torch.isinf(filters).any() or torch.isnan(m).any() or torch.isinf(m).any():
+        print(" torch.isnan(filters).any() or torch.isinf(filters).any() or torch.isnan(m).any() or torch.isinf(m).any() ")
+    
     active_indices = torch.where(m == 1)[0]
-    num_active_filters = len(active_indices)
-    
-    if num_active_filters < 2:
-        print(f"Step: <global_step>, Insufficient active filters: {num_active_filters}")
-      
-    active_filters = filters[active_indices]
-    active_filters_flat = active_filters.view(num_active_filters, -1)
-    
-    # Save active_filters_flat to a text file
-    with open('active_filters_flat.txt', 'w') as f:
-        f.write("Active Filters Flat Values:\n")
-        f.write(str(active_filters_flat.tolist()))  # Convert tensor to list and write to file
-    
-    if torch.isnan(active_filters_flat).any() or torch.isinf(active_filters_flat).any():
-        print("Step: <global_step>, NaN or Inf in active filters")
-    
-    std = torch.std(active_filters_flat, dim=1)
-    #print(f"std: {std.tolist()}")
-    
-    if std.eq(0).any() or (std < 1e-5).any():
-        print("Step: <global_step>, Zero or near-zero standard deviation detected, adding noise to filters")
- 
-    correlation_matrix = torch.corrcoef(active_filters_flat)
-    if torch.isnan(correlation_matrix).any() or torch.isinf(correlation_matrix).any():
-        print("Step: <global_step>, NaN or Inf detected in correlation matrix")
 
-    num_active_filters = len(active_indices)
+    if len(active_indices) < 2:
+        print("len(active_indices) < 2")
+
+    active_filters = filters[active_indices]
+    active_filters_flat = active_filters.view(active_filters.size(0), -1)
+
+    correlation_matrix = torch.corrcoef(active_filters_flat)
+
+    if torch.isnan(correlation_matrix).any():
+        print("torch.isnan(correlation_matrix)")
+
     upper_tri = torch.triu(correlation_matrix, diagonal=1)
     sum_of_squares = torch.sum(torch.pow(upper_tri, 2))
+
+    num_active_filters = len(active_indices)
     normalized_correlation = sum_of_squares / num_active_filters
-    
     return normalized_correlation, active_indices
 
 class MaskLoss(nn.Module):
     def __init__(self):
         super(MaskLoss, self).__init__()
-    
     def forward(self, filters, mask):
         correlation, active_indices = compute_active_filters_correlation(filters, mask)
         return correlation, active_indices
