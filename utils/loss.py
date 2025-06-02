@@ -90,7 +90,7 @@ def compute_active_filters_correlation(filters, m, global_step=0, epsilon=1e-4):
     correlation_matrix = torch.corrcoef(active_filters_flat)
     if torch.isnan(correlation_matrix).any() or torch.isinf(correlation_matrix).any():
         print(f"Step: {global_step}, NaN or Inf detected in correlation matrix")
-        return torch.tensor(0.0, device=filters.device), active_indices
+     
 
     # محاسبه normalized_correlation
     upper_tri = torch.triu(correlation_matrix, diagonal=1)
