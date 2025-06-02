@@ -49,7 +49,7 @@ def compute_active_filters_correlation(filters, m, epsilon=1e-4):
         print("Step: <global_step>, NaN or Inf in active filters")
     
     std = torch.std(active_filters_flat, dim=1)
-    if std.eq(0).any() or (std < 1e-8).any():
+    if std.eq(0).any() :
         print("Step: <global_step>, Zero or near-zero standard deviation detected, adding noise to filters")
         
         torch.manual_seed(42)  
@@ -58,15 +58,6 @@ def compute_active_filters_correlation(filters, m, epsilon=1e-4):
         
         if torch.isnan(active_filters_flat).any() or torch.isinf(active_filters_flat).any():
             print("Step: <global_step>, NaN or Inf after adding noise")
-
-    diff = active_filters_flat.unsqueeze(1) - active_filters_flat.unsqueeze(0)
-    norm_diff = torch.norm(diff, dim=2)
-    mask = torch.triu(torch.ones(num_active_filters, num_active_filters, device=filters.device), diagonal=1).bool()
-    identical_pairs = (norm_diff < 1e-4) & mask
-    
-    if identical_pairs.any():
-        print("Step: <global_step>, Identical or near-identical filters detected")
-        return torch.tensor(1.0, device=filters.device), active_indices
  
     correlation_matrix = torch.corrcoef(active_filters_flat)
     if torch.isnan(correlation_matrix).any() or torch.isinf(correlation_matrix).any():
