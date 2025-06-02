@@ -28,34 +28,40 @@ class RCLoss(nn.Module):
 
 
 def compute_active_filters_correlation(filters, m):
-    if torch.isnan(filters).any() or torch.isinf(filters).any() or torch.isnan(m).any() or torch.isinf(m).any():
-        print("Input contains NaN or Inf values. Returning zero correlation and empty indices.")
+    # باز کردن فایل برای نوشتن
+    with open('output.txt', 'a') as f:
+        if torch.isnan(filters).any() or torch.isinf(filters).any() or torch.isnan(m).any() or torch.isinf(m).any():
+            f.write("Input contains NaN or Inf values. Returning zero correlation and empty indices.\n")
+            
 
-    print("Mask values:", m)
-    active_indices = torch.where(m == 1)[0]
-    print("Active indices:", active_indices)
-    
-    active_indices = torch.where(m == 1)[0]
+        # نوشتن مقادیر ماسک در فایل
+        f.write(f"Mask values: {m}\n")
+        
+        active_indices = torch.where(m == 1)[0]
+        # نوشتن اندیس‌های فعال در فایل
+        f.write(f"Active indices: {active_indices}\n")
 
-    if len(active_indices) < 2:
-        print("active filters less than 2.")
-
-    active_filters = filters[active_indices]
-    active_filters_flat = active_filters.view(active_filters.size(0), -1)
-    var = torch.var(active_filters_flat, dim=1) + 1e-8 
+        if len(active_indices) < 2:
+            f.write("active filters less than 2.\n")
  
 
-    correlation_matrix = torch.corrcoef(active_filters_flat)
+        active_filters = filters[active_indices]
+        active_filters_flat = active_filters.view(active_filters.size(0), -1)
+        var = torch.var(active_filters_flat, dim=1) + 1e-8 
 
-    if torch.isnan(correlation_matrix).any():
-        print("Corr matrix is null")
+        correlation_matrix = torch.corrcoef(active_filters_flat)
 
-    upper_tri = torch.triu(correlation_matrix, diagonal=1)
-    sum_of_squares = torch.sum(torch.pow(upper_tri, 2))
+        if torch.isnan(correlation_matrix).any():
+            f.write("Corr matrix is null\n")
+    
 
-    num_active_filters = len(active_indices)
-    normalized_correlation = sum_of_squares / num_active_filters
-    return normalized_correlation, active_indices
+        upper_tri = torch.triu(correlation_matrix, diagonal=1)
+        sum_of_squares = torch.sum(torch.pow(upper_tri, 2))
+
+        num_active_filters = len(active_indices)
+        normalized_correlation = sum_of_squares / num_active_filters
+        return normalized_correlation, active_indices
+
 
 class MaskLoss(nn.Module):
     def __init__(self):
