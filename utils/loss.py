@@ -29,7 +29,6 @@ class RCLoss(nn.Module):
 
 
 def compute_active_filters_correlation(filters, m, epsilon=1e-4):
-
     if torch.isnan(filters).any() or torch.isinf(filters).any():
         print("Step: <global_step>, NaN or Inf detected in filters")
         
@@ -45,11 +44,18 @@ def compute_active_filters_correlation(filters, m, epsilon=1e-4):
     active_filters = filters[active_indices]
     active_filters_flat = active_filters.view(num_active_filters, -1)
     
+    # Save active_filters_flat to a text file
+    with open('active_filters_flat.txt', 'w') as f:
+        f.write("Active Filters Flat Values:\n")
+        f.write(str(active_filters_flat.tolist()))  # Convert tensor to list and write to file
+    
     if torch.isnan(active_filters_flat).any() or torch.isinf(active_filters_flat).any():
         print("Step: <global_step>, NaN or Inf in active filters")
     
     std = torch.std(active_filters_flat, dim=1)
-    if std.eq(0).any() :
+    print(f"std: {std.tolist()}")
+    
+    if std.eq(0).any():
         print("Step: <global_step>, Zero or near-zero standard deviation detected, adding noise to filters")
  
     correlation_matrix = torch.corrcoef(active_filters_flat)
@@ -59,7 +65,7 @@ def compute_active_filters_correlation(filters, m, epsilon=1e-4):
     num_active_filters = len(active_indices)
     upper_tri = torch.triu(correlation_matrix, diagonal=1)
     sum_of_squares = torch.sum(torch.pow(upper_tri, 2))
-    normalized_correlation = sum_of_squares /  num_active_filters
+    normalized_correlation = sum_of_squares / num_active_filters
     
     return normalized_correlation, active_indices
 
