@@ -27,51 +27,84 @@ class RCLoss(nn.Module):
     def forward(self, x, y):
         return (self.rc(x) - self.rc(y)).pow(2).mean()
 
-def compute_active_filters_correlation(filters, m, epsilon=1e-4):
+
+import torch
+import torch.nn as nn
+
+def compute_active_filters_correlation(filters, m, global_step=0, epsilon=1e-4):
     # بررسی وجود مقادیر NaN یا Inf در فیلترها
     if torch.isnan(filters).any() or torch.isinf(filters).any():
-        print("NaN or Inf detected in filters")
-        return None
+        print(f"Step: {global_step}, NaN or Inf detected in filters")
+        return None, None
 
     # بررسی وجود مقادیر NaN یا Inf در ماسک
     if torch.isnan(m).any() or torch.isinf(m).any():
-        print("NaN or Inf detected in mask")
-        return None
+        print(f"Step: {global_step}, NaN or Inf detected in mask")
+        return None, None
     
     # استخراج ایندکس‌های فیلترهای فعال
     active_indices = torch.where(m == 1)[0]
     num_active_filters = len(active_indices)
     
+    # چاپ تعداد فیلترهای فعال
     if num_active_filters < 2:
-        print(f"Insufficient active filters: {num_active_filters}")
-        return active_indices
+        print(f"Step: {global_step}, Insufficient active filters: {num_active_filters}")
+      
 
     # انتخاب فیلترهای فعال
     active_filters = filters[active_indices]
     active_filters_flat = active_filters.view(num_active_filters, -1)
     
+    # ذخیره مقادیر active_filters_flat در فایل
+    with open('active_filters_flat.txt', 'a') as f:
+        f.write(f"Step: {global_step}, Active Filters Flat Values:\n")
+        f.write(str(active_filters_flat.tolist()) + "\n\n")
+    
+    # بررسی NaN یا Inf در active_filters_flat
+    if torch.isnan(active_filters_flat).any() or torch.isinf(active_filters_flat).any():
+        print(f"Step: {global_step}, NaN or Inf in active filters")
+        return None, None
+    
     # محاسبه انحراف معیار
     std = torch.std(active_filters_flat, dim=1)
     
-    # بررسی انحراف معیار صفر یا نزدیک به صفر
+    # بررسی انحراف معیارهای صفر یا نزدیک به صفر و ذخیره آن‌ها
     if std.eq(0).any() or (std < 1e-5).any():
-        print("Zero or near-zero standard deviation detected, adding noise to filters")
+        print(f"Step: {global_step}, Zero or near-zero standard deviation detected, adding noise to filters")
+        # ذخیره انحراف معیارهای مشکل‌دار
+        zero_std_indices = torch.where((std == 0) | (std < 1e-5))[0]
+        zero_std_values = std[zero_std_indices].tolist()
+        with open('std_filters.txt', 'a') as f:
+            f.write(f"Step: {global_step}, Zero or near-zero standard deviations detected:\n")
+            f.write(f"Indices: {zero_std_indices.tolist()}\n")
+            f.write(f"Values: {zero_std_values}\n\n")
+   
+        std = torch.std(active_filters_flat, dim=1)
     
-    # ذخیره انحراف معیار در فایل
+    # ذخیره تمام انحراف معیارها در فایل
     with open('std_filters.txt', 'a') as f:
-        f.write("Standard Deviations for Each Filter:\n")
+        f.write(f"Step: {global_step}, Standard Deviations for All Filters:\n")
         f.write(str(std.tolist()) + "\n\n")
     
-    return active_indices
+    # محاسبه ماتریس همبستگی
+    correlation_matrix = torch.corrcoef(active_filters_flat)
+    if torch.isnan(correlation_matrix).any() or torch.isinf(correlation_matrix).any():
+        print(f"Step: {global_step}, NaN or Inf detected in correlation matrix")
+        return torch.tensor(0.0, device=filters.device), active_indices
+
+    # محاسبه normalized_correlation
+    upper_tri = torch.triu(correlation_matrix, diagonal=1)
+    sum_of_squares = torch.sum(torch.pow(upper_tri, 2))
+    normalized_correlation = sum_of_squares / num_active_filters
+    
+    return normalized_correlation, active_indices
 
 class MaskLoss(nn.Module):
     def __init__(self):
         super(MaskLoss, self).__init__()
     
-    def forward(self, filters, mask):
-        active_indices = compute_active_filters_correlation(filters, mask)
-        # برگرداندن یک تنسور صفر برای correlation به منظور سازگاری با train_ddp.py
-        correlation = torch.tensor(0.0, device=filters.device)
+    def forward(self, filters, mask, global_step=0):
+        correlation, active_indices = compute_active_filters_correlation(filters, mask, global_step)
         return correlation, active_indices
 
 
