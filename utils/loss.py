@@ -28,7 +28,7 @@ class RCLoss(nn.Module):
         return (self.rc(x) - self.rc(y)).pow(2).mean()
 
 
-def compute_active_filters_correlation(filters, m, epsilon=1e-6):
+def compute_active_filters_correlation(filters, m, epsilon=1e-4):
 
     if torch.isnan(filters).any() or torch.isinf(filters).any():
         print("Step: <global_step>, NaN or Inf detected in filters")
