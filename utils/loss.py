@@ -64,6 +64,11 @@ class MaskLoss(nn.Module):
     def forward(self, filters, mask):
         correlation, active_indices, nan_count = compute_active_filters_correlation(filters, mask)
         self.nan_count_total += nan_count  # Accumulate NaN occurrences
+
+        if nan_count > 0:
+            print(f"[MaskLoss] NaN detected in correlation matrix! Count in this step: {nan_count}")
+        print(f"[MaskLoss] Total NaN count so far: {self.nan_count_total}")
+        
         return correlation, active_indices
 
     def get_nan_count(self):
