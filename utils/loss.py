@@ -28,8 +28,6 @@ class RCLoss(nn.Module):
         return (self.rc(x) - self.rc(y)).pow(2).mean()
 
 
-import torch
-import torch.nn as nn
 
 def compute_active_filters_correlation(filters, m):
 
@@ -57,7 +55,16 @@ def compute_active_filters_correlation(filters, m):
         print("Step: <global_step>, Zero or near-zero standard deviation in active_filters_flat")
         return torch.tensor(float('nan'), device=filters.device), active_indices
     
-
+# محاسبه تفاوت بین تمام جفت‌های فیلتر به صورت ماتریسی
+    diff = active_filters_flat.unsqueeze(1) - active_filters_flat.unsqueeze(0)  # شکل: (n, n, d)
+    norm_diff = torch.norm(diff, dim=2)  # شکل: (n, n)
+# بررسی جفت‌های بالای قطر اصلی
+    mask = torch.triu(torch.ones(n, n, device=filters.device), diagonal=1).bool()
+    identical_pairs = (norm_diff < 1e-6) & mask
+    if identical_pairs.any():
+        print("Step: <global_step>, Identical or near-identical filters detected")
+        return torch.tensor(float('nan'), device=filters.device), active_indices
+                
     correlation_matrix = torch.corrcoef(active_filters_flat)
     
     if torch.isnan(correlation_matrix).any():
@@ -68,7 +75,7 @@ def compute_active_filters_correlation(filters, m):
     sum_of_squares = torch.sum(torch.pow(upper_tri, 2))
     
     normalized_correlation = sum_of_squares / num_active_filters
-    return normalized_correlation, active_indices
+    return normalized_correlation, active_indices  
 
 class MaskLoss(nn.Module):
     def __init__(self):
