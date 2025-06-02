@@ -28,13 +28,13 @@ class RCLoss(nn.Module):
 
 
 def compute_active_filters_correlation(filters, m):
-    if torch.isnan(filters).any() or torch.isinf(filters).any() or torch.isnan(m).any() or torch.isinf(m).any():
-        print("Input contains NaN or Inf values. Returning zero correlation and empty indices.")
+    #if torch.isnan(filters).any() or torch.isinf(filters).any() or torch.isnan(m).any() or torch.isinf(m).any():
+     #   print("Input contains NaN or Inf values. Returning zero correlation and empty indices.")
     
     active_indices = torch.where(m == 1)[0]
 
-    if len(active_indices) < 2:
-        print("active filters less than 2.")
+    #if len(active_indices) < 2:
+     #   print("active filters less than 2.")
 
     active_filters = filters[active_indices]
     active_filters_flat = active_filters.view(active_filters.size(0), -1)
@@ -43,8 +43,8 @@ def compute_active_filters_correlation(filters, m):
 
     correlation_matrix = torch.corrcoef(active_filters_flat)
 
-    if torch.isnan(correlation_matrix).any():
-        print("Corr matrix is null")
+   # if torch.isnan(correlation_matrix).any():
+    #    print("Corr matrix is null")
 
     upper_tri = torch.triu(correlation_matrix, diagonal=1)
     sum_of_squares = torch.sum(torch.pow(upper_tri, 2))
