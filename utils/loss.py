@@ -28,22 +28,23 @@ class RCLoss(nn.Module):
         return (self.rc(x) - self.rc(y)).pow(2).mean()
 
 
-def compute_active_filters_correlation(filters, m, layer_idx, global_step, epsilon=1e-4):
+def compute_active_filters_correlation(filters, m, epsilon=1e-4):
     # بررسی وجود مقادیر NaN یا Inf در فیلترها
     if torch.isnan(filters).any() or torch.isinf(filters).any():
-        print(f"Step: {global_step}, Layer: {layer_idx}, NaN or Inf detected in filters")
+        print("NaN or Inf detected in filters")
 
     # بررسی وجود مقادیر NaN یا Inf در ماسک
     if torch.isnan(m).any() or torch.isinf(m).any():
-        print(f"Step: {global_step}, Layer: {layer_idx}, NaN or Inf detected in mask")
-     
+        print("NaN or Inf detected in mask")
+
+    
     # استخراج ایندکس‌های فیلترهای فعال
     active_indices = torch.where(m == 1)[0]
     num_active_filters = len(active_indices)
     
     if num_active_filters < 2:
-        print(f"Step: {global_step}, Layer: {layer_idx}, Insufficient active filters: {num_active_filters}")
- 
+        print(f"Insufficient active filters: {num_active_filters}")
+
 
     # انتخاب فیلترهای فعال
     active_filters = filters[active_indices]
@@ -54,31 +55,14 @@ def compute_active_filters_correlation(filters, m, layer_idx, global_step, epsil
     
     # بررسی انحراف معیار صفر یا نزدیک به صفر
     if std.eq(0).any() or (std < 1e-5).any():
-        print(f"Step: {global_step}, Layer: {layer_idx}, Zero or near-zero standard deviation detected, adding noise to filters")
+        print("Zero or near-zero standard deviation detected, adding noise to filters")
     
     # ذخیره انحراف معیار در فایل
-    with open(f'std_layer_{layer_idx}.txt', 'a') as f:
-        f.write(f"Step: {global_step}, Layer: {layer_idx}\n")
+    with open('std_filters.txt', 'a') as f:
         f.write("Standard Deviations for Each Filter:\n")
         f.write(str(std.tolist()) + "\n\n")
     
-    # بررسی وجود NaN یا Inf در فیلترهای فعال
-    if torch.isnan(active_filters_flat).any() or torch.isinf(active_filters_flat).any():
-        print(f"Step: {global_step}, Layer: {layer_idx}, NaN or Inf in active filters")
-   
-    
-    correlation_matrix = torch.corrcoef(active_filters_flat)
-    
-    # بررسی وجود NaN یا Inf در ماتریس همبستگی
-    if torch.isnan(correlation_matrix).any() or torch.isinf(correlation_matrix).any():
-        print(f"Step: {global_step}, Layer: {layer_idx}, NaN or Inf detected in correlation matrix")
-     
-
-    upper_tri = torch.triu(correlation_matrix, diagonal=1)
-    sum_of_squares = torch.sum(torch.pow(upper_tri, 2))
-    normalized_correlation = sum_of_squares / num_active_filters
-    
-    return normalized_correlation, active_indices
+    return None, active_indices
 
 class MaskLoss(nn.Module):
     def __init__(self):
@@ -87,7 +71,6 @@ class MaskLoss(nn.Module):
     def forward(self, filters, mask):
         correlation, active_indices = compute_active_filters_correlation(filters, mask)
         return correlation, active_indices
-
 
 class CrossEntropyLabelSmooth(nn.Module):
     def __init__(self, num_classes, epsilon):
