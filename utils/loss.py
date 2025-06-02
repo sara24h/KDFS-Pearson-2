@@ -26,23 +26,29 @@ class RCLoss(nn.Module):
     def forward(self, x, y):
         return (self.rc(x) - self.rc(y)).pow(2).mean()
 
+import torch
+import warnings
+
 def compute_active_filters_correlation(filters, m):
     if torch.isnan(filters).any() or torch.isinf(filters).any() or torch.isnan(m).any() or torch.isinf(m).any():
         warnings.warn("Input contains NaN or Inf values. Returning zero correlation and empty indices.")
-    
+        return torch.tensor(0.0, device=filters.device), torch.tensor([], device=filters.device, dtype=torch.long)
+
     active_indices = torch.where(m == 1)[0]
 
     if len(active_indices) < 2:
         warnings.warn("Fewer than 2 active filters found. Returning zero correlation.")
+        return torch.tensor(0.0, device=filters.device), active_indices
 
     active_filters = filters[active_indices]
     active_filters_flat = active_filters.view(active_filters.size(0), -1) 
-    var = torch.var(active_filters_flat, dim=1)+ 1e-8 
+    var = torch.var(active_filters_flat, dim=1) + 1e-8  
     
     correlation_matrix = torch.corrcoef(active_filters_flat)
 
     if torch.isnan(correlation_matrix).any():
         warnings.warn("Correlation matrix contains NaN values. Returning zero correlation.")
+        return torch.tensor(0.0, device=filters.device), active_indices
 
     upper_tri = torch.triu(correlation_matrix, diagonal=1)
     sum_of_squares = torch.sum(torch.pow(upper_tri, 2))
@@ -51,7 +57,11 @@ def compute_active_filters_correlation(filters, m):
     normalized_correlation = sum_of_squares / num_active_filters
     
     with open('correlation_output.txt', 'a') as f:
-        f.write(f"Layer Correlation Matrix:\n{correlation_matrix.numpy()}\n")
+        if correlation_matrix.is_cuda:
+            correlation_matrix_cpu = correlation_matrix.cpu()
+        else:
+            correlation_matrix_cpu = correlation_matrix
+        f.write(f"Layer Correlation Matrix:\n{correlation_matrix_cpu.numpy()}\n")
         f.write(f"Normalized Correlation: {normalized_correlation.item()}\n")
         f.write("-" * 50 + "\n")
     
