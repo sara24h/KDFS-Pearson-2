@@ -32,7 +32,7 @@ def compute_active_filters_correlation(filters, m, epsilon=1e-4):
 
     if torch.isnan(filters).any() or torch.isinf(filters).any():
         print("Step: <global_step>, NaN or Inf detected in filters")
-          
+        
     if torch.isnan(m).any() or torch.isinf(m).any():
         print("Step: <global_step>, NaN or Inf detected in mask")
 
@@ -45,22 +45,37 @@ def compute_active_filters_correlation(filters, m, epsilon=1e-4):
     active_filters = filters[active_indices]
     active_filters_flat = active_filters.view(num_active_filters, -1)
     
-    std = torch.std(active_filters_flat, dim=1)
+    if torch.isnan(active_filters_flat).any() or torch.isinf(active_filters_flat).any():
+        print("Step: <global_step>, NaN or Inf in active filters")
     
+    std = torch.std(active_filters_flat, dim=1)
     if std.eq(0).any() or (std < 1e-8).any():
         print("Step: <global_step>, Zero or near-zero standard deviation detected, adding noise to filters")
-
+        
+        torch.manual_seed(42)  
         noise = torch.randn_like(active_filters_flat) * epsilon
         active_filters_flat = active_filters_flat + noise
+        
+        if torch.isnan(active_filters_flat).any() or torch.isinf(active_filters_flat).any():
+            print("Step: <global_step>, NaN or Inf after adding noise")
 
-    correlation_matrix = torch.corrcoef(active_filters_flat)
+    diff = active_filters_flat.unsqueeze(1) - active_filters_flat.unsqueeze(0)
+    norm_diff = torch.norm(diff, dim=2)
+    mask = torch.triu(torch.ones(num_active_filters, num_active_filters, device=filters.device), diagonal=1).bool()
+    identical_pairs = (norm_diff < 1e-4) & mask
     
-    if torch.isnan(correlation_matrix).any():
-        print("Step: <global_step>, NaN detected in correlation matrix")
+    if identical_pairs.any():
+        print("Step: <global_step>, Identical or near-identical filters detected")
+        return torch.tensor(1.0, device=filters.device), active_indices
+ 
+    correlation_matrix = torch.corrcoef(active_filters_flat)
+    if torch.isnan(correlation_matrix).any() or torch.isinf(correlation_matrix).any():
+        print("Step: <global_step>, NaN or Inf detected in correlation matrix")
 
+    num_active_filters = len(active_indices)
     upper_tri = torch.triu(correlation_matrix, diagonal=1)
     sum_of_squares = torch.sum(torch.pow(upper_tri, 2))
-    normalized_correlation = sum_of_squares / num_active_filters
+    normalized_correlation = sum_of_squares /  num_active_filters
     
     return normalized_correlation, active_indices
 
