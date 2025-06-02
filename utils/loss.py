@@ -29,24 +29,28 @@ class RCLoss(nn.Module):
 
 
 def compute_active_filters_correlation(filters, m):
-
+    if torch.isnan(filters).any() or torch.isinf(filters).any():
+        print("Step: <global_step>, NaN or Inf detected in filters")
+      
+    if torch.isnan(m).any() or torch.isinf(m).any():
+        print("Step: <global_step>, NaN or Inf detected in mask")
+       
     active_indices = torch.where(m == 1)[0]
-
     active_filters = filters[active_indices]
-    print("num active filters:" ,len(active_filters))
-    active_filters_flat = active_filters.view(active_filters.size(0), -1) 
-
-    correlation_matrix = torch.corrcoef(active_filters_flat)
-
-    upper_tri = torch.triu(correlation_matrix, diagonal=1)
-    sum_of_squares = torch.sum(torch.pow(upper_tri, 2))
-
     num_active_filters = len(active_indices)
-
+    
     if num_active_filters == 0:
         print("zero active filters")
+
+    active_filters_flat = active_filters.view(active_filters.size(0), -1)
     
-    normalized_correlation = sum_of_squares / num_active_filters
+    if active_filters_flat.size(0) < 2 or torch.std(active_filters_flat, dim=1).eq(0).any():
+        print("Step: <global_step>, Insufficient data or zero variance in active_filters_flat")
+      
+    correlation_matrix = torch.corrcoef(active_filters_flat)
+    upper_tri = torch.triu(correlation_matrix, diagonal=1)
+    sum_of_squares = torch.sum(torch.pow(upper_tri, 2))
+    normalized_correlation = sum_of_squares / num_active_filters 
     return normalized_correlation, active_indices
 
 class MaskLoss(nn.Module):
