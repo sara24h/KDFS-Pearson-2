@@ -33,7 +33,8 @@ def compute_active_filters_correlation(filters, m):
     active_indices = torch.where(m == 1)[0]
 
     active_filters = filters[active_indices]
-    active_filters_flat = active_filters.view(active_filters.size(0), -1) + 1e-8 
+    print("num active filters:" ,len(active_filters))
+    active_filters_flat = active_filters.view(active_filters.size(0), -1) 
 
     correlation_matrix = torch.corrcoef(active_filters_flat)
 
@@ -41,6 +42,10 @@ def compute_active_filters_correlation(filters, m):
     sum_of_squares = torch.sum(torch.pow(upper_tri, 2))
 
     num_active_filters = len(active_indices)
+
+    if num_active_filters == 0:
+        print("zero active filters")
+    
     normalized_correlation = sum_of_squares / num_active_filters
     return normalized_correlation, active_indices
 
