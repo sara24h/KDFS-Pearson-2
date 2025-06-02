@@ -337,7 +337,7 @@ class TrainDDP:
 
         torch.cuda.empty_cache()
         self.teacher.eval()
-        scaler = GradScaler('cuda')
+        scaler = amp.GradScaler('cuda')
 
         if self.resume:
             self.resume_student_ckpt()
@@ -382,7 +382,7 @@ class TrainDDP:
                             self.logger.warning("Invalid input detected (NaN or Inf)")
                         continue
 
-                    with autocast('cuda'):
+                    with amp.autocast('cuda', enabled=True):
                         logits_student, feature_list_student = self.student(images)
                         logits_student = logits_student.squeeze(1)
                         with torch.no_grad():
