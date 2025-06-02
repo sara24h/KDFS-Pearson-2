@@ -70,7 +70,10 @@ class MaskLoss(nn.Module):
     
     def forward(self, filters, mask):
         active_indices = compute_active_filters_correlation(filters, mask)
-        return active_indices
+        # برگرداندن یک تنسور صفر برای correlation به منظور سازگاری با train_ddp.py
+        correlation = torch.tensor(0.0, device=filters.device)
+        return correlation, active_indices
+
 
 class CrossEntropyLabelSmooth(nn.Module):
     def __init__(self, num_classes, epsilon):
