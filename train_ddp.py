@@ -28,6 +28,66 @@ Flops_baselines = {
     }
 }
 
+def compute_active_filters_correlation(filters, m, nan_counter=None):
+    # بررسی NaN یا Inf در ورودی‌ها
+    if torch.isnan(filters).any() or torch.isinf(filters).any() or torch.isnan(m).any() or torch.isinf(m).any():
+        print("خطا: NaN یا Inf در filters یا m یافت شد!")
+        return torch.tensor(0.0, device=filters.device, requires_grad=True), torch.tensor([], device=filters.device, dtype=torch.long)
+
+    # یافتن اندیس‌های فیلترهای فعال
+    active_indices = torch.where(m == 1)[0]
+    
+    # بررسی تعداد فیلترهای فعال
+    if len(active_indices) < 2:
+        print("خطا: تعداد فیلترهای فعال کمتر از 2 است!")
+        return torch.tensor(0.0, device=filters.device, requires_grad=True), active_indices
+
+    # انتخاب و تخت کردن فیلترهای فعال
+    active_filters = filters[active_indices]
+    active_filters_flat = active_filters.view(active_filters.size(0), -1)
+    
+    # نرمال‌سازی داده‌ها برای پایداری
+    epsilon = 1e-8
+    mean = active_filters_flat.mean(dim=1, keepdim=True)
+    std = active_filters_flat.std(dim=1, keepdim=True)
+    active_filters_flat = (active_filters_flat - mean) / (std + epsilon)
+    
+    # بررسی واریانس صفر
+    if (std < epsilon).any():
+        print("خطا: واریانس برخی فیلترهای فعال صفر یا نزدیک به صفر است!")
+        return torch.tensor(0.0, device=filters.device, requires_grad=True), active_indices
+
+    # محاسبه ماتریس همبستگی
+    correlation_matrix = torch.corrcoef(active_filters_flat)
+    
+    # بررسی NaN در ماتریس همبستگی
+    if torch.isnan(correlation_matrix).any():
+        print("torch.isnan(correlation_matrix)")
+        if nan_counter is not None:
+            nan_counter[0] += 1  # افزایش شمارنده
+        return torch.tensor(0.0, device=filters.device, requires_grad=True), active_indices
+
+    # محاسبه مجموع مربعات مقادیر بالای قطر اصلی
+    upper_tri = torch.triu(correlation_matrix, diagonal=1)
+    sum_of_squares = torch.sum(torch.pow(upper_tri, 2))
+    
+    # نرمال‌سازی با بررسی تقسیم بر صفر
+    num_active_filters = len(active_indices)
+    if num_active_filters == 0:
+        print("خطا: num_active_filters صفر است!")
+        return torch.tensor(0.0, device=filters.device, requires_grad=True), active_indices
+    
+    normalized_correlation = sum_of_squares / num_active_filters
+    return normalized_correlation, active_indices
+
+class MaskLoss(nn.Module):
+    def __init__(self):
+        super(MaskLoss, self).__init__()
+    
+    def forward(self, filters, mask, nan_counter=None):
+        correlation, active_indices = compute_active_filters_correlation(filters, mask, nan_counter)
+        return correlation, active_indices
+
 class TrainDDP:
     def __init__(self, args):
         self.args = args
@@ -62,7 +122,7 @@ class TrainDDP:
         self.world_size = 0
         self.local_rank = -1
         self.rank = -1
-        self.nan_counter = [0]
+        self.nan_counter = [0]  # شمارنده برای ردیابی خطاهای NaN در correlation_matrix
 
         if self.dataset_mode == "hardfake":
             self.args.dataset_type = "hardfakevsrealfaces"
@@ -243,7 +303,7 @@ class TrainDDP:
         self.ori_loss = nn.BCEWithLogitsLoss().cuda()
         self.kd_loss = loss.KDLoss().cuda()
         self.rc_loss = loss.RCLoss().cuda()
-        self.mask_loss = loss.MaskLoss().cuda()
+        self.mask_loss = MaskLoss().cuda()
 
     def define_optim(self):
         weight_params = map(
@@ -368,6 +428,7 @@ class TrainDDP:
                     if epoch > 1
                     else self.warmup_start_lr
                 )
+                epoch_nan_counter = [0]  # شمارنده برای هر epoch
 
             self.student.module.update_gumbel_temperature(epoch)
             with tqdm(total=len(self.train_loader), ncols=100, disable=self.rank != 0) as _tqdm:
@@ -409,20 +470,15 @@ class TrainDDP:
 
                         mask_loss = torch.tensor(0.0, device=images.device, dtype=torch.float32)
                         matched_layers = 0
-                        #if self.rank == 0:
-                           # self.logger.info(f"Total mask modules: {len(self.student.module.mask_modules)}")
-
                         for name, module in self.student.module.named_modules():
                             if isinstance(module, SoftMaskedConv2d):
                                 filters = module.weight
                                 found = False
-                                adjusted_name = name.replace("module.", "") 
+                                adjusted_name = name.replace("module.", "")
                                 for mask_module in self.student.module.mask_modules:
                                     if mask_module.mask.shape[0] == filters.shape[0] and mask_module.layer_name == adjusted_name:
                                         m = mask_module.mask
-                                        correlation, active_indices = self.mask_loss(filters, m)
-                                        #if self.rank == 0:
-                                        #    self.logger.info(f"Layer {name}: {len(active_indices)} active filters, indices={active_indices.tolist()}, correlation={correlation.item()}")
+                                        correlation, active_indices = self.mask_loss(filters, m, epoch_nan_counter)
                                         mask_loss += correlation
                                         found = True
                                         matched_layers += 1
@@ -436,10 +492,6 @@ class TrainDDP:
                             if self.rank == 0:
                                 self.logger.warning("No layers matched for mask loss calculation.")
 
-                        if self.rank == 0:
-                            total_conv_layers = sum(1 for _, m in self.student.module.named_modules() if isinstance(m, (nn.Conv2d, SoftMaskedConv2d)))
-                            #self.logger.info(f"Total Conv2d and SoftMaskedConv2d layers: {total_conv_layers}, Matched layers: {matched_layers}")
-
                         total_loss = (
                             ori_loss
                             + self.coef_kdloss * kd_loss
@@ -448,6 +500,8 @@ class TrainDDP:
                         )
 
                     scaler.scale(total_loss).backward()
+                    # کنترل گرادیان‌ها برای جلوگیری از ناپایداری
+                    torch.nn.utils.clip_grad_norm_(self.student.parameters(), max_norm=1.0)
                     scaler.step(self.optim_weight)
                     scaler.step(self.optim_mask)
                     scaler.update()
@@ -497,6 +551,7 @@ class TrainDDP:
                 self.writer.add_scalar("train/lr/lr", lr, global_step=epoch)
                 self.writer.add_scalar("train/temperature/gumbel_temperature", self.student.module.gumbel_temperature, global_step=epoch)
                 self.writer.add_scalar("train/Flops", Flops, global_step=epoch)
+                self.writer.add_scalar("train/nan_correlation_count", epoch_nan_counter[0], global_step=epoch)
 
                 self.logger.info(
                     "[Train] "
@@ -508,7 +563,8 @@ class TrainDDP:
                     "RCLoss {rc_loss:.4f} "
                     "MaskLoss {mask_loss:.6f} "
                     "TotalLoss {total_loss:.4f} "
-                    "Train_Acc {train_acc:.2f}".format(
+                    "Train_Acc {train_acc:.2f} "
+                    "NaN_Correlation_Count {nan_count:d}".format(
                         epoch,
                         gumbel_temperature=self.student.module.gumbel_temperature,
                         lr=lr,
@@ -518,7 +574,13 @@ class TrainDDP:
                         mask_loss=meter_maskloss.avg,
                         total_loss=meter_loss.avg,
                         train_acc=meter_top1.avg,
+                        nan_count=epoch_nan_counter[0]
                     )
+                )
+
+                self.nan_counter[0] += epoch_nan_counter[0]  # جمع کل برای همه epochها
+                self.logger.info(
+                    "[Train] Total NaN in correlation_matrix so far: {0}".format(self.nan_counter[0])
                 )
 
                 masks = []
@@ -599,6 +661,9 @@ class TrainDDP:
 
         if self.rank == 0:
             self.logger.info("Train finished!")
+            self.logger.info(
+                "[Final] Total NaN in correlation_matrix across all epochs: {0}".format(self.nan_counter[0])
+            )
 
     def main(self):
         self.dist_init()
