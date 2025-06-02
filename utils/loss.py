@@ -53,9 +53,9 @@ def compute_active_filters_correlation(filters, m, epsilon=1e-4):
         print("Step: <global_step>, NaN or Inf in active filters")
     
     std = torch.std(active_filters_flat, dim=1)
-    print(f"std: {std.tolist()}")
+    #print(f"std: {std.tolist()}")
     
-    if std.eq(0).any():
+    if std.eq(0).any() or (std < 1e-5).any():
         print("Step: <global_step>, Zero or near-zero standard deviation detected, adding noise to filters")
  
     correlation_matrix = torch.corrcoef(active_filters_flat)
