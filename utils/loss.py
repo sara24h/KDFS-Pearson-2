@@ -27,58 +27,63 @@ class RCLoss(nn.Module):
     def forward(self, x, y):
         return (self.rc(x) - self.rc(y)).pow(2).mean()
 
-def compute_active_filters_correlation(filters, m, epsilon=1e-3, global_step=0):
-    # بررسی nan یا inf در ورودی‌ها
-    if torch.isnan(filters).any() or torch.isinf(filters).any():
-        print(f"Step: {global_step}, NaN or Inf detected in filters")
-         
-    if torch.isnan(m).any() or torch.isinf(m).any():
-        print(f"Step: {global_step}, NaN or Inf detected in mask")
 
-    active_indices = torch.where(m == 1)[0]
-    num_active_filters = len(active_indices)
+
+import torch
+import warnings
+
+def compute_active_filters_correlation(filters, m):
+    # بررسی وجود NaN یا Inf در ورودی‌ها
+    if torch.isnan(filters).any() or torch.isinf(filters).any() or torch.isnan(m).any() or torch.isinf(m).any():
+        warnings.warn("Input contains NaN or Inf values.")
     
-    if num_active_filters < 2:  # حداقل 5 فیلتر برای پایداری
-        print(f"Step: {global_step}, Insufficient active filters: {num_active_filters}")
+    # یافتن اندیس‌های فیلترهای فعال
+    active_indices = torch.where(m == 1)[0]
 
+    if len(active_indices) < 2:
+        warnings.warn("Fewer than 2 active filters found.")
+
+    # انتخاب فیلترهای فعال
     active_filters = filters[active_indices]
-    active_filters_flat = active_filters.view(num_active_filters, -1)
-
-    if torch.isnan(active_filters_flat).any() or torch.isinf(active_filters_flat).any():
-        print(f"Step: {global_step}, NaN or Inf in active filters")
-
-    std = torch.std(active_filters_flat, dim=1)
-    if std.eq(0).any() or (std < 1e-5).any():
-        print(f"Step: {global_step}, Zero or near-zero standard deviation detected, adding noise to filters")
-        active_filters_flat += torch.randn_like(active_filters_flat) * epsilon
+    active_filters_flat = active_filters.view(active_filters.size(0), -1)
+    
+    # محاسبه انحراف معیار برای هر فیلتر فعال
+    std = torch.sqrt(torch.var(active_filters_flat, dim=1))
+    
+    # باز کردن فایل متنی برای نوشتن
+    with open('std_output.txt', 'w', encoding='utf-8') as f:
+        f.write("Standard deviations of active filters:\n")
+        f.write(str(std.tolist()) + "\n\n")
+        
+        # بررسی مقادیر انحراف معیار و نوشتن در فایل
+        for i, std_value in enumerate(std):
+            if std_value == 0:
+                f.write(f"Standard deviation for filter {i} is 0\n")
+            else:
+                f.write(f"Standard deviation for filter {i} is close to 0\n" )
     
     # محاسبه ماتریس همبستگی
     correlation_matrix = torch.corrcoef(active_filters_flat)
+
+    # بررسی وجود NaN در ماتریس همبستگی
+    if torch.isnan(correlation_matrix).any():
+        warnings.warn("Correlation matrix contains NaN values.")
     
-    # بررسی nan یا inf در ماتریس همبستگی
-    if torch.isnan(correlation_matrix).any() or torch.isinf(correlation_matrix).any():
-        print(f"Step: {global_step}, NaN or Inf detected in correlation_matrix")
-    
-    # محاسبه مجموع مربعات مقادیر بالای مثلثی
+    # محاسبه مجموع مربعات عناصر بالای قطر اصلی
     upper_tri = torch.triu(correlation_matrix, diagonal=1)
     sum_of_squares = torch.sum(torch.pow(upper_tri, 2))
-    
-    # نرمال‌سازی
-    normalized_correlation = sum_of_squares / num_active_filters
-    
-    # بررسی nan یا inf در خروجی نهایی
-    if torch.isnan(normalized_correlation) or torch.isinf(normalized_correlation):
-        print(f"Step: {global_step}, NaN or Inf detected in normalized_correlation")
-    
-    return normalized_correlation, active_indices
 
+    # نرمال‌سازی
+    num_active_filters = len(active_indices)
+    normalized_correlation = sum_of_squares / num_active_filters
+    return normalized_correlation, active_indices
 
 class MaskLoss(nn.Module):
     def __init__(self):
         super(MaskLoss, self).__init__()
     
-    def forward(self, filters, mask, global_step=0):
-        correlation, active_indices = compute_active_filters_correlation(filters, mask, global_step=global_step)
+    def forward(self, filters, mask):
+        correlation, active_indices = compute_active_filters_correlation(filters, mask)
         return correlation, active_indices
 
 class CrossEntropyLabelSmooth(nn.Module):
