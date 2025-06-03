@@ -529,7 +529,23 @@ class TrainDDP:
                     + str(Flops.item() / (10**6))
                     + "M"
                 )
+                
+                filter_avgs = []
+                for name, module in self.student.module.named_modules():
+                    if isinstance(module, SoftMaskedConv2d):
+                        filters = module.weight  # Shape: [out_channels, in_channels, height, width]
+                    # Compute the mean of each filter (across in_channels, height, and width)
+                        filter_mean = filters.view(filters.size(0), -1).mean(dim=1)  # Mean per filter
+                    # Average the means of all filters in this layer and round to 2 decimal places
+                        layer_avg = round(filter_mean.mean().item(), 2)
+                        filter_avgs.append(layer_avg)
+                self.logger.info("[Train filter avg] Epoch {0} : ".format(epoch) + str(filter_avgs))
 
+                self.logger.info(
+                    "[Train model Flops] Epoch {0} : ".format(epoch)
+                    + str(Flops.item() / (10**6))
+                    + "M"
+                )
             # Validation
             if self.rank == 0:
                 self.student.eval()
