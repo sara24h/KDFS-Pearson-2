@@ -31,8 +31,17 @@ import warnings
 
 
 def compute_active_filters_correlation(filters, m):
-    if torch.isnan(filters).any() or torch.isinf(filters).any() or torch.isnan(m).any() or torch.isinf(m).any():
-        warnings.warn("Input contains NaN or Inf values.")
+    if torch.isnan(filters).any():
+        warnings.warn("filters contain NaN")
+        
+    if torch.isinf(filters).any():
+        warnings.warn("filters contain Inf")
+        
+    if torch.isnan(m).any() :
+        warnings.warn("Masks contain NaN")
+        
+    if torch.isinf(m).any():
+        warnings.warn("Masks contain Inf")
         
     active_indices = torch.where(m == 1)[0]
 
