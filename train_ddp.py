@@ -189,6 +189,10 @@ class TrainDDP:
         self.test_loader = dataset_instance.loader_test
         if self.rank == 0:
             self.logger.info("Dataset has been loaded!")
+            # Log data statistics to check normalization
+            for images, targets in self.train_loader:
+                self.logger.info(f"Sample train batch image stats: mean={images.mean().item():.5f}, std={images.std().item():.5f}")
+                break
 
     def build_model(self):
         if self.rank == 0:
@@ -237,6 +241,15 @@ class TrainDDP:
         self.student.fc = nn.Linear(num_ftrs, 1)  # Ensure output is 1 for binary classification
         self.student = self.student.cuda()
         self.student = DDP(self.student, device_ids=[self.local_rank])
+        # Log initial weights
+        if self.rank == 0:
+            filter_avgs = []
+            for name, module in self.student.module.named_modules():
+                if isinstance(module, nn.Conv2d) or isinstance(module, SoftMaskedConv2d):
+                    filters = module.weight
+                    layer_avg = round(filters.view(filters.size(0), -1).mean(dim=1).mean().item(), 5)
+                    filter_avgs.append(layer_avg)
+            self.logger.info("[Initial filter avg] : " + str(filter_avgs))
 
     def define_loss(self):
         self.ori_loss = nn.BCEWithLogitsLoss().cuda()
@@ -383,6 +396,16 @@ class TrainDDP:
                             self.logger.warning("Invalid input detected (NaN or Inf)")
                         continue
 
+                    # Log weights before update
+                    if self.rank == 0:
+                        filter_avgs_before = []
+                        for name, module in self.student.module.named_modules():
+                            if isinstance(module, SoftMaskedConv2d):
+                                filters = module.weight
+                                layer_avg = round(filters.view(filters.size(0), -1).mean(dim=1).mean().item(), 5)
+                                filter_avgs_before.append(layer_avg)
+                        self.logger.info("[Train filter avg before] Epoch {0} : ".format(epoch) + str(filter_avgs_before))
+
                     with amp.autocast('cuda', enabled=True):
                         logits_student, feature_list_student = self.student(images)
                         logits_student = logits_student.squeeze(1)
@@ -408,20 +431,15 @@ class TrainDDP:
 
                         mask_loss = torch.tensor(0.0, device=images.device, dtype=torch.float32)
                         matched_layers = 0
-                        #if self.rank == 0:
-                           # self.logger.info(f"Total mask modules: {len(self.student.module.mask_modules)}")
-
                         for name, module in self.student.module.named_modules():
                             if isinstance(module, SoftMaskedConv2d):
                                 filters = module.weight
                                 found = False
-                                adjusted_name = name.replace("module.", "") 
+                                adjusted_name = name.replace("module.", "")
                                 for mask_module in self.student.module.mask_modules:
                                     if mask_module.mask.shape[0] == filters.shape[0] and mask_module.layer_name == adjusted_name:
                                         m = mask_module.mask
                                         correlation, active_indices = self.mask_loss(filters, m)
-                                        #if self.rank == 0:
-                                        #    self.logger.info(f"Layer {name}: {len(active_indices)} active filters, indices={active_indices.tolist()}, correlation={correlation.item()}")
                                         mask_loss += correlation
                                         found = True
                                         matched_layers += 1
@@ -435,10 +453,6 @@ class TrainDDP:
                             if self.rank == 0:
                                 self.logger.warning("No layers matched for mask loss calculation.")
 
-                        if self.rank == 0:
-                            total_conv_layers = sum(1 for _, m in self.student.module.named_modules() if isinstance(m, (nn.Conv2d, SoftMaskedConv2d)))
-                            #self.logger.info(f"Total Conv2d and SoftMaskedConv2d layers: {total_conv_layers}, Matched layers: {matched_layers}")
-
                         total_loss = (
                             ori_loss
                             + self.coef_kdloss * kd_loss
@@ -446,10 +460,36 @@ class TrainDDP:
                             + self.coef_maskloss * mask_loss
                         )
 
+                    # Check for NaN/Inf in loss and gradients
+                    if self.rank == 0:
+                        if torch.isnan(total_loss).any() or torch.isinf(total_loss).any():
+                            self.logger.warning(f"Total loss is NaN or Inf: {total_loss.item()}")
+                        self.logger.info(f"Total loss before backward: {total_loss.item():.6f}")
+
                     scaler.scale(total_loss).backward()
+
+                    # Log gradients
+                    if self.rank == 0:
+                        for name, module in self.student.module.named_modules():
+                            if isinstance(module, SoftMaskedConv2d):
+                                if module.weight.grad is not None:
+                                    self.logger.info(f"Layer {name} weight grad mean: {module.weight.grad.mean().item():.6f}")
+                                else:
+                                    self.logger.info(f"Layer {name} has no gradients for weights!")
+
                     scaler.step(self.optim_weight)
                     scaler.step(self.optim_mask)
                     scaler.update()
+
+                    # Log weights after update
+                    if self.rank == 0:
+                        filter_avgs_after = []
+                        for name, module in self.student.module.named_modules():
+                            if isinstance(module, SoftMaskedConv2d):
+                                filters = module.weight
+                                layer_avg = round(filters.view(filters.size(0), -1).mean(dim=1).mean().item(), 5)
+                                filter_avgs_after.append(layer_avg)
+                        self.logger.info("[Train filter avg after] Epoch {0} : ".format(epoch) + str(filter_avgs_after))
 
                     preds = (torch.sigmoid(logits_student) > 0.5).float()
                     correct = (preds == targets).sum().item()
@@ -530,19 +570,15 @@ class TrainDDP:
                     + str(Flops.item() / (10**6))
                     + "M"
                 )
-                
+
                 filter_avgs = []
                 for name, module in self.student.module.named_modules():
                     if isinstance(module, SoftMaskedConv2d):
-                        filters = module.weight  # Shape: [out_channels, in_channels, height, width]
-                    # Compute the mean of each filter (across in_channels, height, and width)
-                        filter_mean = filters.view(filters.size(0), -1).mean(dim=1)  # Mean per filter
-                    # Average the means of all filters in this layer and round to 2 decimal places
-                        layer_avg = round(filter_mean.mean().item(), 5)
+                        filters = module.weight
+                        layer_avg = round(filters.view(filters.size(0), -1).mean(dim=1).mean().item(), 5)
                         filter_avgs.append(layer_avg)
                 self.logger.info("[Train filter avg] Epoch {0} : ".format(epoch) + str(filter_avgs))
 
-        
             # Validation
             if self.rank == 0:
                 self.student.eval()
