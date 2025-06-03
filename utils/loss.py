@@ -27,7 +27,6 @@ class RCLoss(nn.Module):
     def forward(self, x, y):
         return (self.rc(x) - self.rc(y)).pow(2).mean()
 
-import torch
 import warnings
 
 def compute_active_filters_correlation(filters, m):
@@ -47,7 +46,7 @@ def compute_active_filters_correlation(filters, m):
 
     std = torch.sqrt(torch.var(active_filters_flat, dim=1))
 
-    std_threshold = 0.005
+    std_threshold = 0.0005
     valid_std_indices = torch.where(std > std_threshold)[0]
 
     if len(valid_std_indices) < 2:
