@@ -29,33 +29,30 @@ class RCLoss(nn.Module):
 
 import warnings
 
+
 def compute_active_filters_correlation(filters, m):
     if torch.isnan(filters).any() or torch.isinf(filters).any() or torch.isnan(m).any() or torch.isinf(m).any():
         warnings.warn("Input contains NaN or Inf values.")
-
+        
     active_indices = torch.where(m == 1)[0]
 
     if len(active_indices) < 2:
         warnings.warn("Fewer than 2 active filters found.")
-
+   
     active_filters = filters[active_indices]
     active_filters_flat = active_filters.view(active_filters.size(0), -1)
 
     if torch.isnan(active_filters_flat).any() or torch.isinf(active_filters_flat).any():
         warnings.warn("Active filters contain NaN or Inf values.")
-
+    
+    mean = torch.mean(active_filters_flat, dim=1, keepdim=True)
+    centered = active_filters_flat - mean
+    cov_matrix = torch.matmul(centered, centered.t()) / (active_filters_flat.size(1) - 1)
     std = torch.sqrt(torch.var(active_filters_flat, dim=1))
 
-    std_threshold = 0.0005
-    valid_std_indices = torch.where(std > std_threshold)[0]
-
-    if len(valid_std_indices) < 2:
-        warnings.warn("Fewer than 2 filters have standard deviation above threshold.")
-
-    valid_active_filters_flat = active_filters_flat[valid_std_indices]
-    valid_active_indices = active_indices[valid_std_indices]
-
-    correlation_matrix = torch.corrcoef(valid_active_filters_flat)
+    epsilon = 1e-6  
+    std_outer = std.unsqueeze(1) * std.unsqueeze(0) 
+    correlation_matrix = cov_matrix / (std_outer + epsilon)
 
     if torch.isnan(correlation_matrix).any():
         warnings.warn("Correlation matrix contains NaN values.")
@@ -63,9 +60,9 @@ def compute_active_filters_correlation(filters, m):
     upper_tri = torch.triu(correlation_matrix, diagonal=1)
     sum_of_squares = torch.sum(torch.pow(upper_tri, 2))
 
-    num_active_filters = len(valid_active_indices)
+    num_active_filters = len(active_indices)
     normalized_correlation = sum_of_squares / num_active_filters
-    return normalized_correlation, valid_active_indices
+    return normalized_correlation, active_indices
 
 class MaskLoss(nn.Module):
     def __init__(self):
