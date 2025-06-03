@@ -32,56 +32,84 @@ class RCLoss(nn.Module):
 import torch
 import warnings
 
+import torch
+import warnings
+
 def compute_active_filters_correlation(filters, m):
     # بررسی وجود NaN یا Inf در ورودی‌ها
     if torch.isnan(filters).any() or torch.isinf(filters).any() or torch.isnan(m).any() or torch.isinf(m).any():
         warnings.warn("Input contains NaN or Inf values.")
-    
+
+
     # یافتن اندیس‌های فیلترهای فعال
     active_indices = torch.where(m == 1)[0]
 
     if len(active_indices) < 2:
         warnings.warn("Fewer than 2 active filters found.")
 
+
     # انتخاب فیلترهای فعال
     active_filters = filters[active_indices]
     active_filters_flat = active_filters.view(active_filters.size(0), -1)
+
+    # بررسی NaN یا Inf در active_filters_flat
+    if torch.isnan(active_filters_flat).any() or torch.isinf(active_filters_flat).any():
+        warnings.warn("Active filters contain NaN or Inf values.")
     
     # محاسبه انحراف معیار برای هر فیلتر فعال
     std = torch.sqrt(torch.var(active_filters_flat, dim=1))
-    
+
+    # تعریف آستانه برای انحراف معیار
+    std_threshold = 0.005
+    valid_std_indices = torch.where(std > std_threshold)[0]
+
+    if len(valid_std_indices) < 2:
+        warnings.warn("Fewer than 2 filters have standard deviation above threshold.")
+
+
+    # فیلتر کردن فیلترهای با انحراف معیار معتبر
+    valid_active_filters_flat = active_filters_flat[valid_std_indices]
+    valid_active_indices = active_indices[valid_std_indices]
+
     # باز کردن فایل متنی برای نوشتن
     with open('std_output.txt', 'w', encoding='utf-8') as f:
         f.write("Standard deviations of active filters:\n")
         f.write(str(std.tolist()) + "\n\n")
-        
+
+        f.write("Active filters values:\n")
+        for i, filter_values in enumerate(active_filters_flat):
+            f.write(f"Filter {active_indices[i].item()}: {filter_values.tolist()}\n")
+        f.write("\n")
+
         # بررسی مقادیر انحراف معیار و نوشتن در فایل
         for i, std_value in enumerate(std):
             if std_value == 0:
-                f.write(f"Standard deviation for filter {i} is 0\n")
+                f.write(f"Standard deviation for filter {active_indices[i].item()} is 0\n")
+            elif std_value <= std_threshold:
+                f.write(f"Standard deviation for filter {active_indices[i].item()} is {std_value} (below threshold {std_threshold})\n")
             else:
-                f.write(f"Standard deviation for filter {i} is close to 0\n" )
-    
+                f.write(f"Standard deviation for filter {active_indices[i].item()} is {std_value}\n")
+
     # محاسبه ماتریس همبستگی
-    correlation_matrix = torch.corrcoef(active_filters_flat)
+    correlation_matrix = torch.corrcoef(valid_active_filters_flat)
 
     # بررسی وجود NaN در ماتریس همبستگی
     if torch.isnan(correlation_matrix).any():
         warnings.warn("Correlation matrix contains NaN values.")
-    
+
     # محاسبه مجموع مربعات عناصر بالای قطر اصلی
     upper_tri = torch.triu(correlation_matrix, diagonal=1)
     sum_of_squares = torch.sum(torch.pow(upper_tri, 2))
 
     # نرمال‌سازی
-    num_active_filters = len(active_indices)
+    num_active_filters = len(valid_active_indices)
     normalized_correlation = sum_of_squares / num_active_filters
-    return normalized_correlation, active_indices
+    return normalized_correlation, valid_active_indices
 
 class MaskLoss(nn.Module):
     def __init__(self):
         super(MaskLoss, self).__init__()
-    
+
     def forward(self, filters, mask):
         correlation, active_indices = compute_active_filters_correlation(filters, mask)
         return correlation, active_indices
