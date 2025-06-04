@@ -32,7 +32,7 @@ import warnings
 
 def compute_active_filters_correlation(filters, m):
     if torch.isnan(filters).any():
-        warnings.warn("filters contain NaN")
+        print("filters contain NaN")
         
    # if torch.isinf(filters).any():
     #    warnings.warn("filters contain Inf")
