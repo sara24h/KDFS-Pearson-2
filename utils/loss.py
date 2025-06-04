@@ -34,19 +34,19 @@ def compute_active_filters_correlation(filters, m):
     if torch.isnan(filters).any():
         warnings.warn("filters contain NaN")
         
-    if torch.isinf(filters).any():
-        warnings.warn("filters contain Inf")
+   # if torch.isinf(filters).any():
+    #    warnings.warn("filters contain Inf")
         
-    if torch.isnan(m).any() :
-        warnings.warn("Masks contain NaN")
+    #if torch.isnan(m).any() :
+     #   warnings.warn("Masks contain NaN")
         
-    if torch.isinf(m).any():
-        warnings.warn("Masks contain Inf")
+    #if torch.isinf(m).any():
+     #   warnings.warn("Masks contain Inf")
         
     active_indices = torch.where(m == 1)[0]
 
-    if len(active_indices) < 2:
-        warnings.warn("Fewer than 2 active filters found.")
+    #if len(active_indices) < 2:
+     #   warnings.warn("Fewer than 2 active filters found.")
    
     active_filters = filters[active_indices]
     active_filters_flat = active_filters.view(active_filters.size(0), -1)
