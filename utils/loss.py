@@ -27,27 +27,24 @@ class RCLoss(nn.Module):
     def forward(self, x, y):
         return (self.rc(x) - self.rc(y)).pow(2).mean()
 
-import warnings
-
-
 def compute_active_filters_correlation(filters, m):
     if torch.isnan(filters).any():
         print("filters contain NaN")
         
-   # if torch.isinf(filters).any():
-    #    warnings.warn("filters contain Inf")
+    if torch.isinf(filters).any():
+        print("filters contain Inf")
         
-    #if torch.isnan(m).any() :
-     #   warnings.warn("Masks contain NaN")
+    if torch.isnan(m).any() :
+        print("Masks contain NaN")
         
-    #if torch.isinf(m).any():
-     #   warnings.warn("Masks contain Inf")
-        
+    if torch.isinf(m).any():
+        print("Masks contain Inf")
+    
     active_indices = torch.where(m == 1)[0]
 
-    #if len(active_indices) < 2:
-     #   warnings.warn("Fewer than 2 active filters found.")
-   
+    if len(active_indices) < 2:
+        print("Fewer than 2 active filters found")
+        
     active_filters = filters[active_indices]
     active_filters_flat = active_filters.view(active_filters.size(0), -1)
 
