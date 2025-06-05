@@ -36,7 +36,7 @@ class SoftMaskedConv2d(nn.Module):
         nn.init.kaiming_normal_(self.mask_weight)
 
     def compute_mask(self, ticket):
-        if torch.isnan(self.mask_weight).any()
+        if torch.isnan(self.mask_weight).any():
             print(f"NaN in mask_weight")
 
         if torch.isinf(self.mask_weight).any():
