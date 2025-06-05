@@ -40,34 +40,39 @@ def compute_active_filters_correlation(filters, m):
     if torch.isinf(m).any():
         print("Masks contain Inf")
     
-    active_indices = torch.where(m == 1)[0]
 
+    active_indices = torch.where(m == 1)[0]
+    
     if len(active_indices) < 2:
-        print("Fewer than 2 active filters found")
-        
+        warnings.warn("Fewer than 2 active filters found.")
+
+    # Select active filters
     active_filters = filters[active_indices]
     active_filters_flat = active_filters.view(active_filters.size(0), -1)
-
-    if torch.isnan(active_filters_flat).any() or torch.isinf(active_filters_flat).any():
-        warnings.warn("Active filters contain NaN or Inf values.")
     
-    mean = torch.mean(active_filters_flat, dim=1, keepdim=True)
-    centered = active_filters_flat - mean
-    cov_matrix = torch.matmul(centered, centered.t()) / (active_filters_flat.size(1) - 1)
-    std = torch.sqrt(torch.var(active_filters_flat, dim=1))
-
-    epsilon = 1e-6  
-    std_outer = std.unsqueeze(1) * std.unsqueeze(0) 
-    correlation_matrix = cov_matrix / (std_outer + epsilon)
-
+    # Compute standard deviation for each filter
+    std = torch.std(active_filters_flat, dim=1)
+    
+    # Select filters with non-zero standard deviation
+    valid_indices = torch.where(std > 0)[0]
+    if len(valid_indices) < 2:
+        warnings.warn("Fewer than 2 filters with non-zero std found.")
+    
+    # Filter active_filters_flat to only include filters with non-zero std
+    valid_filters_flat = active_filters_flat[valid_indices]
+    
+    # Compute correlation matrix using torch.corrcoef
+    correlation_matrix = torch.corrcoef(valid_filters_flat)
+    
+    # Check for NaN in correlation matrix (for robustness)
     if torch.isnan(correlation_matrix).any():
         warnings.warn("Correlation matrix contains NaN values.")
 
     upper_tri = torch.triu(correlation_matrix, diagonal=1)
     sum_of_squares = torch.sum(torch.pow(upper_tri, 2))
-
-    num_active_filters = len(active_indices)
-    normalized_correlation = sum_of_squares / num_active_filters
+    num_valid_filters = len(valid_indices)
+    normalized_correlation = sum_of_squares / num_valid_filters
+    
     return normalized_correlation, active_indices
 
 class MaskLoss(nn.Module):
