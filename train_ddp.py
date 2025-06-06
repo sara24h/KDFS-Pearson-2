@@ -538,8 +538,8 @@ class TrainDDP:
                         filters = module.weight  # Shape: [out_channels, in_channels, height, width]
                     # Compute the mean of each filter (across in_channels, height, and width)
                         filter_mean = filters.view(filters.size(0), -1).mean(dim=1)  # Mean per filter
-                    # Average the means of all filters in this layer and round to 2 decimal places
-                        layer_avg = round(filter_mean.mean().item(), 5)
+              
+                        layer_avg = round(filter_mean.mean().item(), 7)
                         filter_avgs.append(layer_avg)
                 self.logger.info("[Train filter avg] Epoch {0} : ".format(epoch) + str(filter_avgs))
 
