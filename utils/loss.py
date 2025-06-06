@@ -30,18 +30,22 @@ class RCLoss(nn.Module):
 def compute_active_filters_correlation(filters, m):
     filters = filters.float() 
     m = m.float() 
-    if torch.isnan(filters).any() or torch.isinf(filters).any():
-        print("filters contain NaN or Inf")
-        return torch.tensor(0.0, device=filters.device, dtype=torch.float32), []
+    if torch.isnan(filters).any():
+        print("filters contain NaN")
+
+
+    if  torch.isinf(filters).any():
+        print("filters contain Inf")
+
+    if torch.isnan(m).any():
+        print("Masks contain NaN")
     
-    if torch.isnan(m).any() or torch.isinf(m).any():
-        print("Masks contain NaN or Inf")
-        return torch.tensor(0.0, device=filters.device, dtype=torch.float32), []
-    
+    if  torch.isinf(m).any():
+        print("Masks contain Inf")
+
     active_indices = torch.where(m == 1)[0]
     if len(active_indices) < 2:
         print(f"Fewer than 2 active filters found: {len(active_indices)}")
-        return torch.tensor(0.0, device=filters.device, dtype=torch.float32), active_indices
     
     active_filters = filters[active_indices]
     active_filters_flat = active_filters.view(active_filters.size(0), -1)
@@ -56,7 +60,6 @@ def compute_active_filters_correlation(filters, m):
     
     if torch.isnan(correlation_matrix).any():
         print("Correlation matrix contains NaN values")
-        return torch.tensor(0.0, device=filters.device, dtype=torch.float32), active_indices
     
     upper_tri = torch.triu(correlation_matrix, diagonal=1)
     sum_of_squares = torch.sum(torch.pow(upper_tri, 2))
