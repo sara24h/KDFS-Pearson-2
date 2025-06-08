@@ -28,46 +28,43 @@ class RCLoss(nn.Module):
         return (self.rc(x) - self.rc(y)).pow(2).mean()
 
 def compute_active_filters_correlation(filters, m):
+    filters = filters.float() 
+    m = m.float() 
     if torch.isnan(filters).any():
         print("filters contain NaN")
-        
-    if torch.isinf(filters).any():
-        print("filters contain Inf")
-        
-    if torch.isnan(m).any() :
-        print("Masks contain NaN")
-        
-    if torch.isinf(m).any():
-        print("Masks contain Inf")
-    
-    active_indices = torch.where(m == 1)[0]
 
+
+    if  torch.isinf(filters).any():
+        print("filters contain Inf")
+
+    if torch.isnan(m).any():
+        print("Masks contain NaN")
+    
+    if  torch.isinf(m).any():
+        print("Masks contain Inf")
+
+    active_indices = torch.where(m == 1)[0]
     if len(active_indices) < 2:
-        print("Fewer than 2 active filters found")
-        
+        print(f"Fewer than 2 active filters found: {len(active_indices)}")
+    
     active_filters = filters[active_indices]
     active_filters_flat = active_filters.view(active_filters.size(0), -1)
-
-    if torch.isnan(active_filters_flat).any() or torch.isinf(active_filters_flat).any():
-        warnings.warn("Active filters contain NaN or Inf values.")
     
     mean = torch.mean(active_filters_flat, dim=1, keepdim=True)
     centered = active_filters_flat - mean
     cov_matrix = torch.matmul(centered, centered.t()) / (active_filters_flat.size(1) - 1)
-    std = torch.sqrt(torch.var(active_filters_flat, dim=1))
-
-    epsilon = 1e-6  
-    std_outer = std.unsqueeze(1) * std.unsqueeze(0) 
-    correlation_matrix = cov_matrix / (std_outer + epsilon)
-
+    std = torch.sqrt(torch.var(active_filters_flat, dim=1) + 1e-6)
+    
+    std_outer = std.unsqueeze(1) * std.unsqueeze(0)
+    correlation_matrix = cov_matrix / (std_outer + 1e-6)
+    
     if torch.isnan(correlation_matrix).any():
-        warnings.warn("Correlation matrix contains NaN values.")
-
+        print("Correlation matrix contains NaN values")
+    
     upper_tri = torch.triu(correlation_matrix, diagonal=1)
     sum_of_squares = torch.sum(torch.pow(upper_tri, 2))
-
     num_active_filters = len(active_indices)
-    normalized_correlation = sum_of_squares / num_active_filters
+    normalized_correlation = sum_of_squares / (num_active_filters + 1e-6)
     return normalized_correlation, active_indices
 
 class MaskLoss(nn.Module):
