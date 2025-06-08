@@ -64,7 +64,7 @@ def compute_active_filters_correlation(filters, m):
     upper_tri = torch.triu(correlation_matrix, diagonal=1)
     sum_of_squares = torch.sum(torch.pow(upper_tri, 2))
     num_active_filters = len(active_indices)
-    normalized_correlation = sum_of_squares / (num_active_filters + 1e-6)
+    normalized_correlation = sum_of_squares / (num_active_filters)
     return normalized_correlation, active_indices
 
 class MaskLoss(nn.Module):
