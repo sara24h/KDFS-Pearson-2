@@ -53,7 +53,13 @@ def compute_active_filters_correlation(filters, m):
     mean = torch.mean(active_filters_flat, dim=1, keepdim=True)
     centered = active_filters_flat - mean
     cov_matrix = torch.matmul(centered, centered.t()) / (active_filters_flat.size(1) - 1)
-    std = torch.sqrt(torch.var(active_filters_flat, dim=1) + 1e-6)
+
+    var = torch.var(active_filters_flat, dim=1)
+    
+    if (var == 0).any():
+        print("Var is zero.")
+    
+    std = torch.sqrt(var + 1e-6)
     
     std_outer = std.unsqueeze(1) * std.unsqueeze(0)
     correlation_matrix = cov_matrix / (std_outer + 1e-6)
