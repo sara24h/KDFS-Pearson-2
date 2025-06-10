@@ -107,7 +107,8 @@ class MaskedNet(nn.Module):
         image_sizes = {
             "hardfakevsrealfaces": 300,
             "rvf10k": 256,
-            "140k": 256
+            "140k": 256,
+            "200k": 256  # اضافه کردن اندازه تصویر برای 200k
         }
         dataset_type = getattr(self, "dataset_type", "hardfakevsrealfaces")
         input_size = image_sizes.get(dataset_type, 256)
@@ -355,4 +356,17 @@ def ResNet_50_sparse_140k(
         gumbel_end_temperature=gumbel_end_temperature,
         num_epochs=num_epochs,
         dataset_type="140k"
+    )
+
+def ResNet_50_sparse_200k(
+    gumbel_start_temperature=2.0, gumbel_end_temperature=0.5, num_epochs=200
+):
+    return ResNet_sparse(
+        block=Bottleneck_sparse,
+        num_blocks=[3, 4, 6, 3],
+        num_classes=1,
+        gumbel_start_temperature=gumbel_start_temperature,
+        gumbel_end_temperature=gumbel_end_temperature,
+        num_epochs=num_epochs,
+        dataset_type="200k"
     )
