@@ -176,9 +176,9 @@ class TrainDDP:
             realfake140k_valid_csv = None
             realfake140k_test_csv = None
             realfake140k_root_dir = None
-            realfake200k_train_csv = os.path.join(self.dataset_dir, 'train_labels.csv')
-            realfake200k_val_csv = os.path.join(self.dataset_dir, 'val_labels.csv')
-            realfake200k_test_csv = os.path.join(self.dataset_dir, 'test_labels.csv')
+            realfake200k_train_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/train_labels.csv"
+            realfake200k_val_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/val_labels.csv"
+            realfake200k_test_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/test_labels.csv"
             realfake200k_root_dir = self.dataset_dir
 
         if self.rank == 0:
