@@ -215,9 +215,8 @@ class FinetuneDDP:
         self.finetune_optim_weight.load_state_dict(
             ckpt_student["finetune_optim_weight"]
         )
-        )
         self.finetune_scheduler_student_weight.load_state_dict(
-            (ckpt_student["finetune_scheduler_student_weight()"])
+            ckpt_student["finetune_scheduler_student_weight"] 
         )
         if self.rank == 0:
             self.logger.info(f"=> Continue from epoch {self.start_epoch}...")
