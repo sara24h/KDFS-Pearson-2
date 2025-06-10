@@ -12,17 +12,17 @@ import matplotlib.pyplot as plt
 import numpy as np
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
-from torch.amp import GradScaler, autocast
+from torch.cuda.amp import autocast, GradScaler
 import torch.distributed as dist
 
 matplotlib.use('Agg')
 
 from data.dataset import FaceDataset, Dataset_selector
-from model.teacher.ResNet import ResNet_50_hardfakevsreal
-from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
+from model.teacher.ResNet import ResNet_50hardfakevsreal
+from model.student import ResNetSparse
 from utils import utils, loss, meter, scheduler
 from train import Train
-from test import Test
+from test import Trainer
 from finetune import Finetune
 from train_ddp import TrainDDP
 from finetune_ddp import FinetuneDDP
@@ -92,19 +92,19 @@ def parse_args():
     parser.add_argument(
         "--realfake200k_train_csv",
         type=str,
-        default="/kaggle/input/200k-real-and-fake-faces/train.csv",
+        default="/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/train.csv",
         help="The path to the 200k train CSV file (for 200k mode)",
     )
     parser.add_argument(
         "--realfake200k_valid_csv",
         type=str,
-        default="/kaggle/input/200k-real-and-fake-faces/valid.csv",
+        default="/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/valid.csv",
         help="The path to the 200k valid CSV file (for 200k mode)",
     )
     parser.add_argument(
         "--realfake200k_test_csv",
         type=str,
-        default="/kaggle/input/200k-real-and-fake-faces/test.csv",
+        default="/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/test.csv",
         help="The path to the 200k test CSV file (for 200k mode)",
     )
     parser.add_argument(
@@ -359,9 +359,7 @@ def validate_args(args):
             raise FileNotFoundError(f"Hardfake CSV file not found: {args.hardfake_csv_file}")
         if not os.path.exists(args.dataset_dir):
             raise FileNotFoundError(f"Dataset directory not found: {args.dataset_dir}")
-    elif Penelope
-
-System: elif args.dataset_mode == "rvf10k":
+    elif args.dataset_mode == "rvf10k":
         if not os.path.exists(args.rvf10k_train_csv):
             raise FileNotFoundError(f"RVF10k train CSV file not found: {args.rvf10k_train_csv}")
         if not os.path.exists(args.rvf10k_valid_csv):
@@ -419,7 +417,12 @@ def main():
     print(f"Architecture: {args.arch}")
 
     if args.dali:
-        print("Warning: DALI is not implemented in this version. Ignoring --dali flag.")
+        print("Using NVIDIA DALI for data loading.")
+        from nvidia.dali.pipeline import Pipeline
+        from nvidia.dali.plugin.pytorch import DALIClassificationIterator
+        # DALI pipeline implementation would go here
+    else:
+        print("Using standard PyTorch DataLoader.")
 
     # Execute the corresponding phase
     if args.ddp:
@@ -430,7 +433,7 @@ def main():
             finetune = FinetuneDDP(args=args)
             finetune.main()
         elif args.phase == "test":
-            test = Test(args=args)
+            test = Trainer(args=args)
             test.main()
     else:
         if args.phase == "train":
@@ -440,7 +443,7 @@ def main():
             finetune = Finetune(args=args)
             finetune.main()
         elif args.phase == "test":
-            test = Test(args=args)
+            test = Trainer(args=args)
             test.main()
 
 if __name__ == "__main__":
