@@ -25,7 +25,7 @@ Flops_baselines = {
         "hardfakevsrealfaces": 7700.0,
         "rvf10k": 5000,
         "140k": 5390.0,
-        "200k": 5390.0,  
+        "200k": 5390.0,
     }
 }
 
@@ -66,7 +66,7 @@ class TrainDDP:
 
         if self.dataset_mode == "hardfake":
             self.args.dataset_type = "hardfakevsrealfaces"
-            self.num_classes = 1  # Changed to 1 for binary classification
+            self.num_classes = 1
             self.image_size = 300
         elif self.dataset_mode == "rvf10k":
             self.args.dataset_type = "rvf10k"
@@ -135,7 +135,7 @@ class TrainDDP:
             realfake140k_test_csv = None
             realfake140k_root_dir = None
             realfake200k_train_csv = None
-            realfake200k_valid_csv = None
+            realfake200k_val_csv = None
             realfake200k_test_csv = None
             realfake200k_root_dir = None
         elif self.dataset_mode == 'rvf10k':
@@ -149,7 +149,7 @@ class TrainDDP:
             realfake140k_test_csv = None
             realfake140k_root_dir = None
             realfake200k_train_csv = None
-            realfake200k_valid_csv = None
+            realfake200k_val_csv = None
             realfake200k_test_csv = None
             realfake200k_root_dir = None
         elif self.dataset_mode == '140k':
@@ -163,7 +163,7 @@ class TrainDDP:
             realfake140k_test_csv = os.path.join(self.dataset_dir, 'test.csv')
             realfake140k_root_dir = self.dataset_dir
             realfake200k_train_csv = None
-            realfake200k_valid_csv = None
+            realfake200k_val_csv = None
             realfake200k_test_csv = None
             realfake200k_root_dir = None
         elif self.dataset_mode == '200k':
@@ -177,11 +177,12 @@ class TrainDDP:
             realfake140k_test_csv = None
             realfake140k_root_dir = None
             realfake200k_train_csv = os.path.join(self.dataset_dir, 'train_labels.csv')
-            realfake200k_valid_csv = os.path.join(self.dataset_dir, 'val_labels.csv')
+            realfake200k_val_csv = os.path.join(self.dataset_dir, 'val_labels.csv')
             realfake200k_test_csv = os.path.join(self.dataset_dir, 'test_labels.csv')
             realfake200k_root_dir = self.dataset_dir
 
         if self.rank == 0:
+            self.logger.info(f"Loading dataset: {self.dataset_mode}")
             if self.dataset_mode == 'hardfake' and not os.path.exists(hardfake_csv_file):
                 raise FileNotFoundError(f"CSV file not found: {hardfake_csv_file}")
             elif self.dataset_mode == 'rvf10k':
@@ -199,8 +200,8 @@ class TrainDDP:
             elif self.dataset_mode == '200k':
                 if not os.path.exists(realfake200k_train_csv):
                     raise FileNotFoundError(f"Train CSV file not found: {realfake200k_train_csv}")
-                if not os.path.exists(realfake200k_valid_csv):
-                    raise FileNotFoundError(f"Valid CSV file not found: {realfake200k_valid_csv}")
+                if not os.path.exists(realfake200k_val_csv):
+                    raise FileNotFoundError(f"Valid CSV file not found: {realfake200k_val_csv}")
                 if not os.path.exists(realfake200k_test_csv):
                     raise FileNotFoundError(f"Test CSV file not found: {realfake200k_test_csv}")
 
@@ -209,14 +210,14 @@ class TrainDDP:
             hardfake_csv_file=hardfake_csv_file,
             hardfake_root_dir=hardfake_root_dir,
             rvf10k_train_csv=rvf10k_train_csv,
-            rvf10k_valid_csv=rvf10k_valid_csv,
+            rvf10k_valid_csv=rvf10k_valid_csv=rvf10k_valid_csv,
             rvf10k_root_dir=rvf10k_root_dir,
             realfake140k_train_csv=realfake140k_train_csv,
             realfake140k_valid_csv=realfake140k_valid_csv,
             realfake140k_test_csv=realfake140k_test_csv,
             realfake140k_root_dir=realfake140k_root_dir,
             realfake200k_train_csv=realfake200k_train_csv,
-            realfake200k_valid_csv=realfake200k_valid_csv,
+            realfake200k_val_csv=realfake200k_val_csv,
             realfake200k_test_csv=realfake200k_test_csv,
             realfake200k_root_dir=realfake200k_root_dir,
             train_batch_size=self.train_batch_size,
@@ -268,7 +269,7 @@ class TrainDDP:
                 gumbel_end_temperature=self.gumbel_end_temperature,
                 num_epochs=self.num_epochs,
             )
-        else:  # rvf10k or 140k
+        else:  # rvf10k, 140k, or 200k
             self.student = ResNet_50_sparse_rvf10k(
                 gumbel_start_temperature=self.gumbel_start_temperature,
                 gumbel_end_temperature=self.gumbel_end_temperature,
@@ -276,7 +277,7 @@ class TrainDDP:
             )
         self.student.dataset_type = self.args.dataset_type
         num_ftrs = self.student.fc.in_features
-        self.student.fc = nn.Linear(num_ftrs, 1)  # Ensure output is 1 for binary classification
+        self.student.fc = nn.Linear(num_ftrs, 1)
         self.student = self.student.cuda()
         self.student = DDP(self.student, device_ids=[self.local_rank])
 
@@ -450,20 +451,15 @@ class TrainDDP:
 
                         mask_loss = torch.tensor(0.0, device=images.device, dtype=torch.float32)
                         matched_layers = 0
-                        #if self.rank == 0:
-                           # self.logger.info(f"Total mask modules: {len(self.student.module.mask_modules)}")
-
                         for name, module in self.student.module.named_modules():
                             if isinstance(module, SoftMaskedConv2d):
                                 filters = module.weight
                                 found = False
-                                adjusted_name = name.replace("module.", "") 
+                                adjusted_name = name.replace("module.", "")
                                 for mask_module in self.student.module.mask_modules:
                                     if mask_module.mask.shape[0] == filters.shape[0] and mask_module.layer_name == adjusted_name:
                                         m = mask_module.mask
                                         correlation, active_indices = self.mask_loss(filters, m)
-                                        #if self.rank == 0:
-                                        #    self.logger.info(f"Layer {name}: {len(active_indices)} active filters, indices={active_indices.tolist()}, correlation={correlation.item()}")
                                         mask_loss += correlation
                                         found = True
                                         matched_layers += 1
@@ -477,10 +473,6 @@ class TrainDDP:
                             if self.rank == 0:
                                 self.logger.warning("No layers matched for mask loss calculation.")
 
-                        if self.rank == 0:
-                            total_conv_layers = sum(1 for _, m in self.student.module.named_modules() if isinstance(m, (nn.Conv2d, SoftMaskedConv2d)))
-                            #self.logger.info(f"Total Conv2d and SoftMaskedConv2d layers: {total_conv_layers}, Matched layers: {matched_layers}")
-
                         total_loss = (
                             ori_loss
                             + self.coef_kdloss * kd_loss
@@ -489,7 +481,6 @@ class TrainDDP:
                         )
 
                     scaler.scale(total_loss).backward()
-                    #torch.nn.utils.clip_grad_norm_(self.student.parameters(), max_norm=1.0)
                     scaler.step(self.optim_weight)
                     scaler.step(self.optim_mask)
                     scaler.update()
@@ -573,23 +564,20 @@ class TrainDDP:
                     + str(Flops.item() / (10**6))
                     + "M"
                 )
-                
+
                 filter_avgs = []
                 for name, module in self.student.module.named_modules():
                     if isinstance(module, SoftMaskedConv2d):
-                        filters = module.weight  # Shape: [out_channels, in_channels, height, width]
-                    # Compute the mean of each filter (across in_channels, height, and width)
-                        filter_mean = filters.view(filters.size(0), -1).mean(dim=1)  # Mean per filter
-              
+                        filters = module.weight
+                        filter_mean = filters.view(filters.size(0), -1).mean(dim=1)
                         layer_avg = round(filter_mean.mean().item(), 7)
                         filter_avgs.append(layer_avg)
                 self.logger.info("[Train filter avg] Epoch {0} : ".format(epoch) + str(filter_avgs))
 
-        
             # Validation
             if self.rank == 0:
                 self.student.eval()
-                self.student.module.ticket = True  # Enable binary mask
+                self.student.module.ticket = True
                 meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
 
                 with torch.no_grad():
