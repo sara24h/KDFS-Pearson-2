@@ -96,7 +96,7 @@ elif dataset_mode == '200k':
     dataset = Dataset_selector(
         dataset_mode='200k',
         realfake200k_train_csv="/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/train_labels.csv",
-        realfake200k_valid_csv="/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/valid_labels.csv",
+        realfake200k_valid_csv="/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/val_labels.csv",
         realfake200k_test_csv="/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/test_labels.csv",
         realfake200k_root_dir=data_dir,
         train_batch_size=batch_size,
