@@ -18,7 +18,7 @@ import torch.distributed as dist
 matplotlib.use('Agg')
 
 from data.dataset import FaceDataset, Dataset_selector
-from model.teacher.ResNet import ResNet_50hardfakevsreal
+from model.teacher.ResNet import ResNet_50_hardfakevsreal
 from model.student import ResNetSparse
 from utils import utils, loss, meter, scheduler
 from train import Train
