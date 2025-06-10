@@ -307,7 +307,7 @@ if __name__ == "__main__":
         realfake200k_train_csv='/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/train_labels.csv',
         realfake200k_val_csv='/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/val_labels.csv',
         realfake200k_test_csv='/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/test_labels.csv',
-        realfake200k_root_dir='/kaggle/input/200k-real-vs-ai-visuals-by-mbilal',
+        realfake200k_root_dir='/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/my_real_vs_ai_dataset/my_real_vs_ai_dataset',
         train_batch_size=128,
         eval_batch_size=128,
         ddp=True,
