@@ -17,16 +17,16 @@ from data.dataset import FaceDataset, Dataset_selector
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a ResNet50 model with single output for fake vs real face classification.')
-    parser.add_argument('--dataset_mode', type=str, required=True, choices=['hardfake', 'rvf10k', '140k'],
-                        help='Dataset to use: hardfake, rvf10k, or 140k')
+    parser.add_argument('--dataset_mode', type=str, required=True, choices=['hardfake', 'rvf10k', '140k', '200k'],
+                        help='Dataset to use: hardfake, rvf10k, 140k, or 200k')
     parser.add_argument('--data_dir', type=str, required=True,
                         help='Path to the dataset directory containing images and CSV file(s)')
     parser.add_argument('--teacher_dir', type=str, default='teacher_dir',
                         help='Directory to save the trained model and outputs')
     parser.add_argument('--img_height', type=int, default=300,
-                        help='Height of input images (default: 300 for hardfake, 256 for rvf10k and 140k)')
+                        help='Height of input images (default: 300 for hardfake, 256 for rvf10k, 140k, and 200k)')
     parser.add_argument('--img_width', type=int, default=300,
-                        help='Width of input images (default: 300 for hardfake, 256 for rvf10k and 140k)')
+                        help='Width of input images (default: 300 for hardfake, 256 for rvf10k, 140k, and 200k)')
     parser.add_argument('--batch_size', type=int, default=32,
                         help='Batch size for training')
     parser.add_argument('--epochs', type=int, default=15,
@@ -44,8 +44,8 @@ torch.backends.cudnn.enabled = True
 dataset_mode = args.dataset_mode
 data_dir = args.data_dir
 teacher_dir = args.teacher_dir
-img_height = 256 if dataset_mode in ['rvf10k', '140k'] else args.img_height
-img_width = 256 if dataset_mode in ['rvf10k', '140k'] else args.img_width
+img_height = 256 if dataset_mode in ['rvf10k', '140k', '200k'] else args.img_height
+img_width = 256 if dataset_mode in ['rvf10k', '140k', '200k'] else args.img_width
 batch_size = args.batch_size
 epochs = args.epochs
 lr = args.lr
@@ -92,8 +92,21 @@ elif dataset_mode == '140k':
         pin_memory=True,
         ddp=False
     )
+elif dataset_mode == '200k':
+    dataset = Dataset_selector(
+        dataset_mode='200k',
+        realfake200k_train_csv="/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/train_labels.csv",
+        realfake200k_valid_csv="/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/valid_labels.csv",
+        realfake200k_test_csv="/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/test_labels.csv",
+        realfake200k_root_dir=data_dir,
+        train_batch_size=batch_size,
+        eval_batch_size=batch_size,
+        num_workers=4,
+        pin_memory=True,
+        ddp=False
+    )
 else:
-    raise ValueError("Invalid dataset_mode. Choose 'hardfake', 'rvf10k', or '140k'.")
+    raise ValueError("Invalid dataset_mode. Choose 'hardfake', 'rvf10k', '140k', or '200k'.")
 
 train_loader = dataset.loader_train
 val_loader = dataset.loader_val
@@ -103,8 +116,6 @@ model = models.resnet50(weights='IMAGENET1K_V1')
 num_ftrs = model.fc.in_features
 model.fc = nn.Linear(num_ftrs, 1)
 model = model.to(device)
-
-print("Skipping torch.compile due to incompatible GPU (Tesla P100, CUDA capability 6.0)")
 
 for param in model.parameters():
     param.requires_grad = False
@@ -213,10 +224,10 @@ axes = axes.ravel()
 with torch.no_grad():
     for i, idx in enumerate(random_indices):
         row = val_data.iloc[idx]
-        img_column = 'path' if dataset_mode == '140k' else 'images_id'
+        img_column = 'path' if dataset_mode in ['140k', '200k'] else 'images_id'
         img_name = row[img_column]
         label = row['label']
-        img_path = os.path.join(data_dir, 'real_vs_fake', 'real-vs-fake', img_name) if dataset_mode == '140k' else os.path.join(data_dir, img_name)
+        img_path = os.path.join(data_dir, 'real_vs_fake', 'real-vs-fake', img_name) if dataset_mode in ['140k', '200k'] else os.path.join(data_dir, img_name)
         if not os.path.exists(img_path):
             print(f"Warning: Image not found: {img_path}")
             axes[i].set_title("Image not found")
@@ -239,10 +250,8 @@ file_path = os.path.join(teacher_dir, 'test_samples.png')
 plt.savefig(file_path)
 display(IPImage(filename=file_path))
 
-
 for param in model.parameters():
     param.requires_grad = True
-
 
 flops, params = get_model_complexity_info(model, (3, img_height, img_width), as_strings=True, print_per_layer_stat=True)
 print('FLOPs:', flops)
