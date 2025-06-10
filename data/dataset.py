@@ -7,12 +7,16 @@ from PIL import Image
 from sklearn.model_selection import train_test_split
 
 class FaceDataset(Dataset):
-    def __init__(self, data_frame, root_dir, transform=None, img_column='images_id'):
+    def __init__(self, data_frame, root_dir, transform=None, img_column='path'):
         self.data = data_frame
         self.root_dir = root_dir
         self.transform = transform
         self.img_column = img_column
         self.label_map = {1: 1, 0: 0, 'real': 1, 'fake': 0, 'Real': 1, 'Fake': 0, 'ai': 0}
+
+        # تغییر نام ستون filename به path اگر وجود داشته باشد
+        if 'filename' in self.data.columns and 'path' not in self.data.columns:
+            self.data = self.data.rename(columns={'filename': 'path'})
 
     def __len__(self):
         return len(self.data)
@@ -20,7 +24,7 @@ class FaceDataset(Dataset):
     def __getitem__(self, idx):
         img_name = os.path.join(self.root_dir, self.data[self.img_column].iloc[idx])
         if not os.path.exists(img_name):
-            raise FileNotFoundError(f"image not found: {img_name}")
+            raise FileNotFoundError(f"Image not found: {img_name}")
         image = Image.open(img_name).convert('RGB')
         label = self.label_map[self.data['label'].iloc[idx]]
         if self.transform:
@@ -30,7 +34,7 @@ class FaceDataset(Dataset):
 class Dataset_selector(Dataset):
     def __init__(
         self,
-        dataset_mode,  
+        dataset_mode,
         hardfake_csv_file=None,
         hardfake_root_dir=None,
         rvf10k_train_csv=None,
@@ -66,10 +70,10 @@ class Dataset_selector(Dataset):
         elif dataset_mode == '140k':
             mean = (0.5207, 0.4258, 0.3806)
             std = (0.2490, 0.2239, 0.2212)
-        else:  
+        else:  # 200k
             mean = (0.4868, 0.3972, 0.3624)
             std = (0.2296, 0.2066, 0.2009)
-            
+
         transform_train = transforms.Compose([
             transforms.Resize(image_size),
             transforms.RandomHorizontalFlip(p=0.5),
@@ -163,14 +167,14 @@ class Dataset_selector(Dataset):
             test_data = pd.read_csv(realfake200k_test_csv)
             root_dir = realfake200k_root_dir
 
-            # Adjust image paths to match folder structure (train/real, train/ai, etc.)
-            def create_image_path(row, split):
-                folder = 'real' if row['label'] == 1 else 'ai'
-                return os.path.join(split, folder, row['filename'])
+            # Adjust image paths to match the current dataset structure (ai_images and real)
+            def create_image_path(row):
+                folder = 'real' if row['label'] == 1 else 'ai_images'
+                return os.path.join(folder, row['filename'])
 
-            train_data['path'] = train_data.apply(lambda row: create_image_path(row, 'train'), axis=1)
-            val_data['path'] = val_data.apply(lambda row: create_image_path(row, 'val'), axis=1)
-            test_data['path'] = test_data.apply(lambda row: create_image_path(row, 'test'), axis=1)
+            train_data['path'] = train_data.apply(create_image_path, axis=1)
+            val_data['path'] = val_data.apply(create_image_path, axis=1)
+            test_data['path'] = test_data.apply(create_image_path, axis=1)
 
             train_data = train_data.sample(frac=1, random_state=3407).reset_index(drop=True)
             val_data = val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
@@ -234,7 +238,7 @@ class Dataset_selector(Dataset):
                 train_dataset,
                 batch_size=train_batch_size,
                 shuffle=True,
-                num_workers=num_workers,
+ Infantil= num_workers,
                 pin_memory=pin_memory,
             )
             self.loader_val = DataLoader(
@@ -298,10 +302,10 @@ if __name__ == "__main__":
 
     dataset_200k = Dataset_selector(
         dataset_mode='200k',
-        realfake200k_train_csv='/kaggle/working/train_labels.csv',
-        realfake200k_val_csv='/kaggle/working/val_labels.csv',
-        realfake200k_test_csv='/kaggle/working/test_labels.csv',
-        realfake200k_root_dir='/kaggle/working/my_real_vs_ai_dataset_splits',
+        realfake200k_train_csv='/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/train_labels.csv',
+        realfake200k_val_csv='/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/val_labels.csv',
+        realfake200k_test_csv='/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/test.csv',
+        realfake200k_root_dir='/kaggle/input/200k-real-vs-ai-visuals-by-mbilal',
         train_batch_size=64,
         eval_batch_size=64,
         ddp=True,
