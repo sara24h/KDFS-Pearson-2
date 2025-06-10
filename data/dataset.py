@@ -7,15 +7,29 @@ from PIL import Image
 from sklearn.model_selection import train_test_split
 
 class FaceDataset(Dataset):
-    def __init__(self, data_frame, root_dir, transform=None, img_column='path'):
+    def __init__(self, data_frame, root_dir, transform=None, img_column='filename'):
         self.data = data_frame
         self.root_dir = root_dir
         self.transform = transform
-        self.img_column = img_column
+
+        possible_columns = ['filename', 'image', 'path']
+        for col in possible_columns:
+            if col in self.data.columns:
+                self.img_column = col
+                break
+        else:
+            raise ValueError(f"No image column found. Expected one of {possible_columns}")
+
         self.label_map = {1: 1, 0: 0, 'real': 1, 'fake': 0, 'Real': 1, 'Fake': 0, 'ai': 0}
 
-        if 'filename' in self.data.columns and 'path' not in self.data.columns:
-            self.data = self.data.rename(columns={'filename': 'path'})
+        missing_images = []
+        for img_path in self.data[self.img_column]:
+            full_path = os.path.join(self.root_dir, img_path)
+            if not os.path.exists(full_path):
+                missing_images.append(full_path)
+        if missing_images:
+            print(f"Warning: {len(missing_images)} images not found in {self.root_dir}")
+            print("Sample missing images:", missing_images[:5])
 
     def __len__(self):
         return len(self.data)
@@ -90,7 +104,7 @@ class Dataset_selector(Dataset):
             transforms.Normalize(mean=mean, std=std),
         ])
 
-        img_column = 'path' if dataset_mode in ['140k', '200k'] else 'images_id'
+        img_column = 'filename' if dataset_mode in ['140k', '200k'] else 'images_id'
 
         # Load data based on dataset_mode
         if dataset_mode == 'hardfake':
@@ -151,8 +165,8 @@ class Dataset_selector(Dataset):
             test_data = pd.read_csv(realfake140k_test_csv)
             root_dir = os.path.join(realfake140k_root_dir, 'real_vs_fake', 'real-vs-fake')
 
-            if 'path' not in train_data.columns:
-                raise ValueError("CSV files for 140k dataset must contain a 'path' column")
+            if 'filename' not in train_data.columns and 'image' not in train_data.columns and 'path' not in train_data.columns:
+                raise ValueError("CSV files for 140k dataset must contain a 'filename', 'image', or 'path' column")
 
             train_data = train_data.sample(frac=1, random_state=3407).reset_index(drop=True)
             val_data = val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
@@ -169,11 +183,12 @@ class Dataset_selector(Dataset):
             # Adjust image paths to match the current dataset structure (ai_images and real)
             def create_image_path(row):
                 folder = 'real' if row['label'] == 1 else 'ai_images'
-                return os.path.join(folder, row['filename'])
+                img_name = row.get('filename', row.get('image', row.get('path', '')))
+                return os.path.join(folder, img_name)
 
-            train_data['path'] = train_data.apply(create_image_path, axis=1)
-            val_data['path'] = train_data.apply(create_image_path, axis=1)
-            test_data['path'] = train_data.apply(create_image_path, axis=1)
+            train_data['filename'] = train_data.apply(create_image_path, axis=1)
+            val_data['filename'] = val_data.apply(create_image_path, axis=1)
+            test_data['filename'] = test_data.apply(create_image_path, axis=1)
 
             train_data = train_data.sample(frac=1, random_state=3407).reset_index(drop=True)
             val_data = val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
@@ -189,17 +204,6 @@ class Dataset_selector(Dataset):
         print(f"Sample test image paths:\n{test_data[img_column].head()}")
         print(f"Total test dataset size: {len(test_data)}")
         print(f"Test label distribution:\n{test_data['label'].value_counts()}")
-
-        # Check for missing images
-        for split, data in [('train', train_data), ('validation', val_data), ('test', test_data)]:
-            missing_images = []
-            for img_path in data[img_column]:
-                full_path = os.path.join(root_dir, img_path)
-                if not os.path.exists(full_path):
-                    missing_images.append(full_path)
-            if missing_images:
-                print(f"Missing {split} images: {len(missing_images)}")
-                print(f"Sample missing {split} images:", missing_images[:5])
 
         # Create datasets
         train_dataset = FaceDataset(train_data, root_dir, transform=transform_train, img_column=img_column)
@@ -228,8 +232,8 @@ class Dataset_selector(Dataset):
             self.loader_test = DataLoader(
                 test_dataset,
                 batch_size=eval_batch_size,
-                num_workers=num_workers,
-                pin_memory=pin_memory,
+                num_workers=1,
+                pin_memory=True,
                 sampler=test_sampler,
             )
         else:
@@ -252,7 +256,7 @@ class Dataset_selector(Dataset):
                 batch_size=eval_batch_size,
                 shuffle=False,
                 num_workers=num_workers,
-                pin_memory=pin_memory,
+                pin_memory=pin_memory
             )
 
         print(f"Train loader batches: {len(self.loader_train)}")
@@ -272,8 +276,8 @@ if __name__ == "__main__":
         dataset_mode='hardfake',
         hardfake_csv_file='/kaggle/input/hardfakevsrealfaces/data.csv',
         hardfake_root_dir='/kaggle/input/hardfakevsrealfaces',
-        train_batch_size=64,
-        eval_batch_size=64,
+        train_batch_size=256,
+        eval_batch_size=128,
         ddp=True,
     )
 
@@ -282,8 +286,8 @@ if __name__ == "__main__":
         rvf10k_train_csv='/kaggle/input/rvf10k/train.csv',
         rvf10k_valid_csv='/kaggle/input/rvf10k/valid.csv',
         rvf10k_root_dir='/kaggle/input/rvf10k',
-        train_batch_size=64,
-        eval_batch_size=64,
+        train_batch_size=256,
+        eval_batch_size=128,
         ddp=True,
     )
 
@@ -293,8 +297,8 @@ if __name__ == "__main__":
         realfake140k_valid_csv='/kaggle/input/140k-real-and-fake-faces/valid.csv',
         realfake140k_test_csv='/kaggle/input/140k-real-and-fake-faces/test.csv',
         realfake140k_root_dir='/kaggle/input/140k-real-and-fake-faces',
-        train_batch_size=64,
-        eval_batch_size=64,
+        train_batch_size=256,
+        eval_batch_size=128,
         ddp=True,
     )
 
@@ -304,7 +308,7 @@ if __name__ == "__main__":
         realfake200k_val_csv='/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/val_labels.csv',
         realfake200k_test_csv='/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/test_labels.csv',
         realfake200k_root_dir='/kaggle/input/200k-real-vs-ai-visuals-by-mbilal',
-        train_batch_size=64,
-        eval_batch_size=64,
+        train_batch_size=128,
+        eval_batch_size=128,
         ddp=True,
     )
