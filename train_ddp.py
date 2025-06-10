@@ -216,7 +216,7 @@ class TrainDDP:
             realfake140k_test_csv=realfake140k_test_csv,
             realfake140k_root_dir=realfake140k_root_dir,
             realfake200k_train_csv=realfake200k_train_csv,
-            realfake200k_valid_csv=realfake200k_valid_csv,
+            realfake200k_valid_csv=realfake200k_val_csv,
             realfake200k_test_csv=realfake200k_test_csv,
             realfake200k_root_dir=realfake200k_root_dir,
             train_batch_size=self.train_batch_size,
