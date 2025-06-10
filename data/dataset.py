@@ -14,7 +14,6 @@ class FaceDataset(Dataset):
         self.img_column = img_column
         self.label_map = {1: 1, 0: 0, 'real': 1, 'fake': 0, 'Real': 1, 'Fake': 0, 'ai': 0}
 
-        # تغییر نام ستون filename به path اگر وجود داشته باشد
         if 'filename' in self.data.columns and 'path' not in self.data.columns:
             self.data = self.data.rename(columns={'filename': 'path'})
 
@@ -173,8 +172,8 @@ class Dataset_selector(Dataset):
                 return os.path.join(folder, row['filename'])
 
             train_data['path'] = train_data.apply(create_image_path, axis=1)
-            val_data['path'] = val_data.apply(create_image_path, axis=1)
-            test_data['path'] = test_data.apply(create_image_path, axis=1)
+            val_data['path'] = train_data.apply(create_image_path, axis=1)
+            test_data['path'] = train_data.apply(create_image_path, axis=1)
 
             train_data = train_data.sample(frac=1, random_state=3407).reset_index(drop=True)
             val_data = val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
@@ -238,7 +237,7 @@ class Dataset_selector(Dataset):
                 train_dataset,
                 batch_size=train_batch_size,
                 shuffle=True,
- Infantil= num_workers,
+                num_workers=num_workers,
                 pin_memory=pin_memory,
             )
             self.loader_val = DataLoader(
@@ -269,7 +268,6 @@ class Dataset_selector(Dataset):
                 print(f"Error loading sample {name} batch: {e}")
 
 if __name__ == "__main__":
-
     dataset_hardfake = Dataset_selector(
         dataset_mode='hardfake',
         hardfake_csv_file='/kaggle/input/hardfakevsrealfaces/data.csv',
@@ -304,7 +302,7 @@ if __name__ == "__main__":
         dataset_mode='200k',
         realfake200k_train_csv='/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/train_labels.csv',
         realfake200k_val_csv='/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/val_labels.csv',
-        realfake200k_test_csv='/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/test.csv',
+        realfake200k_test_csv='/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/test_labels.csv',
         realfake200k_root_dir='/kaggle/input/200k-real-vs-ai-visuals-by-mbilal',
         train_batch_size=64,
         eval_batch_size=64,
