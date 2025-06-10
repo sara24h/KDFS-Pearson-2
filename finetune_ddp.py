@@ -11,7 +11,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from utils import utils, loss, meter, scheduler
 from data.dataset import Dataset_selector
-from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k
+from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k, ResNet_50_sparse_140k, ResNet_50_sparse_200k
 
 class FinetuneDDP:
     def __init__(self, args):
@@ -24,6 +24,8 @@ class FinetuneDDP:
             self.dataset_type = "rvf10k"
         elif self.dataset_mode == "140k":
             self.dataset_type = "140k"
+        elif self.dataset_mode == "200k":
+            self.dataset_type = "200k"
         else:
             raise ValueError(f"Unknown dataset_mode: {self.dataset_mode}")
         self.num_workers = args.num_workers
@@ -132,6 +134,23 @@ class FinetuneDDP:
                 pin_memory=self.pin_memory,
                 ddp=True
             )
+        elif self.dataset_mode == '200k':
+            realfake200k_train_csv = os.path.join(self.dataset_dir, 'train.csv')
+            realfake200k_valid_csv = os.path.join(self.dataset_dir, 'valid.csv')
+            realfake200k_test_csv = os.path.join(self.dataset_dir, 'test.csv')
+            realfake200k_root_dir = self.dataset_dir
+            dataset = Dataset_selector(
+                dataset_mode='200k',
+                realfake200k_train_csv=realfake200k_train_csv,
+                realfake200k_valid_csv=realfake200k_valid_csv,
+                realfake200k_test_csv=realfake200k_test_csv,
+                realfake200k_root_dir=realfake200k_root_dir,
+                train_batch_size=self.finetune_train_batch_size,
+                eval_batch_size=self.finetune_eval_batch_size,
+                num_workers=self.num_workers,
+                pin_memory=self.pin_memory,
+                ddp=True
+            )
         else:
             raise ValueError(f"Unknown dataset_mode: {self.dataset_mode}")
 
@@ -149,8 +168,12 @@ class FinetuneDDP:
             raise FileNotFoundError(f"Checkpoint file not found: {self.finetune_student_ckpt_path}")
         if self.dataset_mode == "hardfake":
             self.student = ResNet_50_sparse_hardfakevsreal()
-        else:  # rvf10k or 140k
+        elif self.dataset_mode == "rvf10k":
             self.student = ResNet_50_sparse_rvf10k()
+        elif self.dataset_mode == "140k":
+            self.student = ResNet_50_sparse_140k()
+        elif self.dataset_mode == "200k":
+            self.student = ResNet_50_sparse_200k()
         ckpt_student = torch.load(self.finetune_student_ckpt_path, map_location="cpu", weights_only=True)
         self.student.load_state_dict(ckpt_student["student"])
         if self.rank == 0:
@@ -192,8 +215,9 @@ class FinetuneDDP:
         self.finetune_optim_weight.load_state_dict(
             ckpt_student["finetune_optim_weight"]
         )
+        )
         self.finetune_scheduler_student_weight.load_state_dict(
-            ckpt_student["finetune_scheduler_student_weight"]
+            (ckpt_student["finetune_scheduler_student_weight()"])
         )
         if self.rank == 0:
             self.logger.info(f"=> Continue from epoch {self.start_epoch}...")
