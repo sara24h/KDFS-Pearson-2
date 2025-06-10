@@ -176,9 +176,9 @@ class TrainDDP:
             realfake140k_valid_csv = None
             realfake140k_test_csv = None
             realfake140k_root_dir = None
-            realfake200k_train_csv = os.path.join(self.dataset_dir, 'train.csv')
-            realfake200k_valid_csv = os.path.join(self.dataset_dir, 'valid.csv')
-            realfake200k_test_csv = os.path.join(self.dataset_dir, 'test.csv')
+            realfake200k_train_csv = os.path.join(self.dataset_dir, 'train_labels.csv')
+            realfake200k_valid_csv = os.path.join(self.dataset_dir, 'val_labels.csv')
+            realfake200k_test_csv = os.path.join(self.dataset_dir, 'test_labels.csv')
             realfake200k_root_dir = self.dataset_dir
 
         if self.rank == 0:
