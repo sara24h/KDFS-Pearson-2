@@ -210,7 +210,7 @@ class TrainDDP:
             hardfake_csv_file=hardfake_csv_file,
             hardfake_root_dir=hardfake_root_dir,
             rvf10k_train_csv=rvf10k_train_csv,
-            rvf10k_valid_csv=rvf10k_valid_csv=rvf10k_valid_csv,
+            rvf10k_valid_csv=rvf10k_valid_csv,
             rvf10k_root_dir=rvf10k_root_dir,
             realfake140k_train_csv=realfake140k_train_csv,
             realfake140k_valid_csv=realfake140k_valid_csv,
