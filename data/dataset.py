@@ -9,9 +9,9 @@ from sklearn.model_selection import train_test_split
 class FaceDataset(Dataset):
     def __init__(self, data_frame, root_dir, transform=None, img_column='filename'):
         self.data = data_frame
-        self.root_dir = os.path.join(root_dir, 'my_real_vs_ai_dataset')  # اصلاح مسیر root_dir
+        self.root_dir = root_dir
         self.transform = transform
-        # شناسایی ستون تصویر
+
         possible_columns = ['filename', 'image', 'path']
         for col in possible_columns:
             if col in self.data.columns:
@@ -22,38 +22,20 @@ class FaceDataset(Dataset):
 
         self.label_map = {1: 1, 0: 0, 'real': 1, 'fake': 0, 'Real': 1, 'Fake': 0, 'ai': 0}
 
-        # بررسی وجود فایل‌های تصویر
         missing_images = []
-        valid_rows = []
-        for idx, row in self.data.iterrows():
-            img_path = row[self.img_column]
-            # اگر مسیر شامل پیشوند دایرکتوری نیست، آن را اضافه کن
-            if not img_path.startswith(('real/', 'ai_images/')):
-                folder = 'real' if row['label'] == 1 else 'ai_images'
-                img_path = os.path.join(folder, img_path)
+        for img_path in self.data[self.img_column]:
             full_path = os.path.join(self.root_dir, img_path)
-            if os.path.exists(full_path):
-                valid_rows.append(idx)
-            else:
+            if not os.path.exists(full_path):
                 missing_images.append(full_path)
         if missing_images:
             print(f"Warning: {len(missing_images)} images not found in {self.root_dir}")
             print("Sample missing images:", missing_images[:5])
-        if valid_rows:
-            self.data = self.data.loc[valid_rows].reset_index(drop=True)
-        else:
-            raise ValueError("No valid images found in dataset")
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
-        img_path = self.data[self.img_column].iloc[idx]
-        # اگر مسیر شامل پیشوند دایرکتوری نیست، آن را اضافه کن
-        if not img_path.startswith(('real/', 'ai_images/')):
-            folder = 'real' if self.data['label'].iloc[idx] == 1 else 'ai_images'
-            img_path = os.path.join(folder, img_path)
-        img_name = os.path.join(self.root_dir, img_path)
+        img_name = os.path.join(self.root_dir, self.data[self.img_column].iloc[idx])
         if not os.path.exists(img_name):
             raise FileNotFoundError(f"Image not found: {img_name}")
         image = Image.open(img_name).convert('RGB')
@@ -62,7 +44,7 @@ class FaceDataset(Dataset):
             image = self.transform(image)
         return image, torch.tensor(label, dtype=torch.float)
 
-class DatasetSelector(Dataset):
+class Dataset_selector(Dataset):
     def __init__(
         self,
         dataset_mode,
@@ -79,9 +61,9 @@ class DatasetSelector(Dataset):
         realfake200k_val_csv=None,
         realfake200k_test_csv=None,
         realfake200k_root_dir=None,
-        train_batch_size=128,
-        eval_batch_size=128,
-        num_workers=2,
+        train_batch_size=32,
+        eval_batch_size=32,
+        num_workers=8,
         pin_memory=True,
         ddp=False,
     ):
@@ -198,17 +180,15 @@ class DatasetSelector(Dataset):
             test_data = pd.read_csv(realfake200k_test_csv)
             root_dir = realfake200k_root_dir
 
-            # Adjust image paths if necessary
+            # Adjust image paths to match the current dataset structure (ai_images and real)
             def create_image_path(row):
                 folder = 'real' if row['label'] == 1 else 'ai_images'
                 img_name = row.get('filename', row.get('image', row.get('path', '')))
-                if img_name.startswith(('real/', 'ai_images/')):
-                    return img_name
                 return os.path.join(folder, img_name)
 
             train_data['filename'] = train_data.apply(create_image_path, axis=1)
             val_data['filename'] = val_data.apply(create_image_path, axis=1)
-            test_data['filename'] = val_data.apply(create_image_path, axis=1)
+            test_data['filename'] = test_data.apply(create_image_path, axis=1)
 
             train_data = train_data.sample(frac=1, random_state=3407).reset_index(drop=True)
             val_data = val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
@@ -292,7 +272,7 @@ class DatasetSelector(Dataset):
                 print(f"Error loading sample {name} batch: {e}")
 
 if __name__ == "__main__":
-    dataset_hardfake = DatasetSelector(
+    dataset_hardfake = Dataset_selector(
         dataset_mode='hardfake',
         hardfake_csv_file='/kaggle/input/hardfakevsrealfaces/data.csv',
         hardfake_root_dir='/kaggle/input/hardfakevsrealfaces',
@@ -301,7 +281,7 @@ if __name__ == "__main__":
         ddp=True,
     )
 
-    dataset_rvf10k = DatasetSelector(
+    dataset_rvf10k = Dataset_selector(
         dataset_mode='rvf10k',
         rvf10k_train_csv='/kaggle/input/rvf10k/train.csv',
         rvf10k_valid_csv='/kaggle/input/rvf10k/valid.csv',
@@ -311,7 +291,7 @@ if __name__ == "__main__":
         ddp=True,
     )
 
-    dataset_140k = DatasetSelector(
+    dataset_140k = Dataset_selector(
         dataset_mode='140k',
         realfake140k_train_csv='/kaggle/input/140k-real-and-fake-faces/train.csv',
         realfake140k_valid_csv='/kaggle/input/140k-real-and-fake-faces/valid.csv',
@@ -322,7 +302,7 @@ if __name__ == "__main__":
         ddp=True,
     )
 
-    dataset_200k = DatasetSelector(
+    dataset_200k = Dataset_selector(
         dataset_mode='200k',
         realfake200k_train_csv='/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/train_labels.csv',
         realfake200k_val_csv='/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/val_labels.csv',
