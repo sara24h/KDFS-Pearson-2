@@ -12,7 +12,7 @@ class FaceDataset(Dataset):
         self.root_dir = root_dir
         self.transform = transform
         self.img_column = img_column
-        self.label_map = {1: 1, 0: 0, 'real': 1, 'fake': 0, 'Real': 1, 'Fake': 0}
+        self.label_map = {1: 1, 0: 0, 'real': 1, 'fake': 0, 'Real': 1, 'Fake': 0, 'ai': 0}
 
     def __len__(self):
         return len(self.data)
@@ -26,16 +26,11 @@ class FaceDataset(Dataset):
         if self.transform:
             image = self.transform(image)
         return image, torch.tensor(label, dtype=torch.float)
-        image = Image.open(img_name).convert('RGB')
-        label = self.label_map[self.data['label'].iloc[idx]]
-        if self.transform:
-            image = self.transform(image)
-        return image, torch.tensor(label, dtype=torch.float)
 
 class Dataset_selector(Dataset):
     def __init__(
         self,
-        dataset_mode,  # 'hardfake', 'rvf10k', or '140k'
+        dataset_mode,  
         hardfake_csv_file=None,
         hardfake_root_dir=None,
         rvf10k_train_csv=None,
@@ -45,32 +40,36 @@ class Dataset_selector(Dataset):
         realfake140k_valid_csv=None,
         realfake140k_test_csv=None,
         realfake140k_root_dir=None,
+        realfake200k_train_csv=None,
+        realfake200k_val_csv=None,
+        realfake200k_test_csv=None,
+        realfake200k_root_dir=None,
         train_batch_size=32,
         eval_batch_size=32,
         num_workers=8,
         pin_memory=True,
         ddp=False,
     ):
-        if dataset_mode not in ['hardfake', 'rvf10k', '140k']:
-            raise ValueError("dataset_mode must be 'hardfake', 'rvf10k', or '140k'")
+        if dataset_mode not in ['hardfake', 'rvf10k', '140k', '200k']:
+            raise ValueError("dataset_mode must be 'hardfake', 'rvf10k', '140k', or '200k'")
 
         self.dataset_mode = dataset_mode
 
-        # Define image size based on dataset_mode
-        image_size = (256, 256) if dataset_mode in ['rvf10k', '140k'] else (300, 300)
+        image_size = (256, 256) if dataset_mode in ['rvf10k', '140k', '200k'] else (300, 300)
 
-        # Define mean and std based on dataset_mode
         if dataset_mode == 'hardfake':
             mean = (0.5124, 0.4165, 0.3684)
             std = (0.2363, 0.2087, 0.2029)
         elif dataset_mode == 'rvf10k':
             mean = (0.5212, 0.4260, 0.3811)
             std = (0.2486, 0.2238, 0.2211)
-        else:  # dataset_mode == '140k'
+        elif dataset_mode == '140k':
             mean = (0.5207, 0.4258, 0.3806)
             std = (0.2490, 0.2239, 0.2212)
-
-        # Define transforms
+        else:  
+            mean = (0.4868, 0.3972, 0.3624)
+            std = (0.2296, 0.2066, 0.2009)
+            
         transform_train = transforms.Compose([
             transforms.Resize(image_size),
             transforms.RandomHorizontalFlip(p=0.5),
@@ -88,8 +87,7 @@ class Dataset_selector(Dataset):
             transforms.Normalize(mean=mean, std=std),
         ])
 
-        # Set img_column based on dataset_mode
-        img_column = 'path' if dataset_mode == '140k' else 'images_id'
+        img_column = 'path' if dataset_mode in ['140k', '200k'] else 'images_id'
 
         # Load data based on dataset_mode
         if dataset_mode == 'hardfake':
@@ -142,7 +140,7 @@ class Dataset_selector(Dataset):
             test_data = test_data.reset_index(drop=True)
             root_dir = rvf10k_root_dir
 
-        else:  # dataset_mode == '140k'
+        elif dataset_mode == '140k':
             if not realfake140k_train_csv or not realfake140k_valid_csv or not realfake140k_test_csv or not realfake140k_root_dir:
                 raise ValueError("realfake140k_train_csv, realfake140k_valid_csv, realfake140k_test_csv, and realfake140k_root_dir must be provided")
             train_data = pd.read_csv(realfake140k_train_csv)
@@ -157,7 +155,27 @@ class Dataset_selector(Dataset):
             val_data = val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
             test_data = test_data.sample(frac=1, random_state=3407).reset_index(drop=True)
 
-        # Debug: Print data statistics
+        else:  # dataset_mode == '200k'
+            if not realfake200k_train_csv or not realfake200k_val_csv or not realfake200k_test_csv or not realfake200k_root_dir:
+                raise ValueError("realfake200k_train_csv, realfake200k_val_csv, realfake200k_test_csv, and realfake200k_root_dir must be provided")
+            train_data = pd.read_csv(realfake200k_train_csv)
+            val_data = pd.read_csv(realfake200k_val_csv)
+            test_data = pd.read_csv(realfake200k_test_csv)
+            root_dir = realfake200k_root_dir
+
+            # Adjust image paths to match folder structure (train/real, train/ai, etc.)
+            def create_image_path(row, split):
+                folder = 'real' if row['label'] == 1 else 'ai'
+                return os.path.join(split, folder, row['filename'])
+
+            train_data['path'] = train_data.apply(lambda row: create_image_path(row, 'train'), axis=1)
+            val_data['path'] = val_data.apply(lambda row: create_image_path(row, 'val'), axis=1)
+            test_data['path'] = test_data.apply(lambda row: create_image_path(row, 'test'), axis=1)
+
+            train_data = train_data.sample(frac=1, random_state=3407).reset_index(drop=True)
+            val_data = val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
+            test_data = test_data.sample(frac=1, random_state=3407).reset_index(drop=True)
+
         print(f"{dataset_mode} dataset statistics:")
         print(f"Sample train image paths:\n{train_data[img_column].head()}")
         print(f"Total train dataset size: {len(train_data)}")
@@ -185,62 +203,59 @@ class Dataset_selector(Dataset):
         val_dataset = FaceDataset(val_data, root_dir, transform=transform_test, img_column=img_column)
         test_dataset = FaceDataset(test_data, root_dir, transform=transform_test, img_column=img_column)
 
-        # Create data loaders with DDP support for all loaders
         if ddp:
             train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=True)
             val_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset, shuffle=False)
             test_sampler = torch.utils.data.distributed.DistributedSampler(test_dataset, shuffle=False)
-            
+
             self.loader_train = DataLoader(
-                train_dataset, 
-                batch_size=train_batch_size, 
+                train_dataset,
+                batch_size=train_batch_size,
                 num_workers=num_workers,
-                pin_memory=pin_memory, 
+                pin_memory=pin_memory,
                 sampler=train_sampler,
             )
             self.loader_val = DataLoader(
-                val_dataset, 
-                batch_size=eval_batch_size, 
+                val_dataset,
+                batch_size=eval_batch_size,
                 num_workers=num_workers,
-                pin_memory=pin_memory, 
+                pin_memory=pin_memory,
                 sampler=val_sampler,
             )
             self.loader_test = DataLoader(
-                test_dataset, 
-                batch_size=eval_batch_size, 
+                test_dataset,
+                batch_size=eval_batch_size,
                 num_workers=num_workers,
-                pin_memory=pin_memory, 
+                pin_memory=pin_memory,
                 sampler=test_sampler,
             )
         else:
             self.loader_train = DataLoader(
-                train_dataset, 
-                batch_size=train_batch_size, 
+                train_dataset,
+                batch_size=train_batch_size,
                 shuffle=True,
-                num_workers=num_workers, 
+                num_workers=num_workers,
                 pin_memory=pin_memory,
             )
             self.loader_val = DataLoader(
-                val_dataset, 
-                batch_size=eval_batch_size, 
+                val_dataset,
+                batch_size=eval_batch_size,
                 shuffle=False,
-                num_workers=num_workers, 
+                num_workers=num_workers,
                 pin_memory=pin_memory,
             )
             self.loader_test = DataLoader(
-                test_dataset, 
-                batch_size=eval_batch_size, 
+                test_dataset,
+                batch_size=eval_batch_size,
                 shuffle=False,
-                num_workers=num_workers, 
+                num_workers=num_workers,
                 pin_memory=pin_memory,
             )
 
-        # Debug: Print loader sizes
         print(f"Train loader batches: {len(self.loader_train)}")
         print(f"Validation loader batches: {len(self.loader_val)}")
         print(f"Test loader batches: {len(self.loader_test)}")
 
-        # Test a sample batch
         for loader, name in [(self.loader_train, 'train'), (self.loader_val, 'validation'), (self.loader_test, 'test')]:
             try:
                 sample = next(iter(loader))
@@ -250,17 +265,16 @@ class Dataset_selector(Dataset):
                 print(f"Error loading sample {name} batch: {e}")
 
 if __name__ == "__main__":
-    # Example for hardfakevsrealfaces
+
     dataset_hardfake = Dataset_selector(
         dataset_mode='hardfake',
         hardfake_csv_file='/kaggle/input/hardfakevsrealfaces/data.csv',
         hardfake_root_dir='/kaggle/input/hardfakevsrealfaces',
         train_batch_size=64,
         eval_batch_size=64,
-        ddp=True,  # Enable DDP
+        ddp=True,
     )
 
-    # Example for rvf10k
     dataset_rvf10k = Dataset_selector(
         dataset_mode='rvf10k',
         rvf10k_train_csv='/kaggle/input/rvf10k/train.csv',
@@ -268,10 +282,9 @@ if __name__ == "__main__":
         rvf10k_root_dir='/kaggle/input/rvf10k',
         train_batch_size=64,
         eval_batch_size=64,
-        ddp=True,  # Enable DDP
+        ddp=True,
     )
 
-    # Example for 140k Real and Fake Faces
     dataset_140k = Dataset_selector(
         dataset_mode='140k',
         realfake140k_train_csv='/kaggle/input/140k-real-and-fake-faces/train.csv',
@@ -280,5 +293,16 @@ if __name__ == "__main__":
         realfake140k_root_dir='/kaggle/input/140k-real-and-fake-faces',
         train_batch_size=64,
         eval_batch_size=64,
-        ddp=True,  # Enable DDP
+        ddp=True,
+    )
+
+    dataset_200k = Dataset_selector(
+        dataset_mode='200k',
+        realfake200k_train_csv='/kaggle/working/train_labels.csv',
+        realfake200k_val_csv='/kaggle/working/val_labels.csv',
+        realfake200k_test_csv='/kaggle/working/test_labels.csv',
+        realfake200k_root_dir='/kaggle/working/my_real_vs_ai_dataset_splits',
+        train_batch_size=64,
+        eval_batch_size=64,
+        ddp=True,
     )
