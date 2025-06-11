@@ -29,14 +29,13 @@ class RCLoss(nn.Module):
 
 
 def compute_active_filters_correlation(filters, m):
-    
     if torch.isnan(filters).any():
-        print("filters contain NaN")
+        print("Filters contain NaN")
         
     if torch.isinf(filters).any():
-        print("filters contain Inf")
+        print("Filters contain Inf")
         
-    if torch.isnan(m).any() :
+    if torch.isnan(m).any():
         print("Masks contain NaN")
         
     if torch.isinf(m).any():
@@ -50,25 +49,38 @@ def compute_active_filters_correlation(filters, m):
     active_filters = filters[active_indices]
     active_filters_flat = active_filters.view(active_filters.size(0), -1)
 
-    if torch.isnan(active_filters_flat).any():
-        warnings.warn("Active filters contain NaN values.")
-
-    if  torch.isinf(active_filters_flat).any():
+    if torch.isnan(active_filters_flat).any() :
+        warnings.warn("Active filters contain NaN.")
+        
+    if torch.isinf(active_filters_flat).any():
         warnings.warn("Active filters contain Inf values.")
+
+    # Calculate variance for each filter
+    variance = torch.var(active_filters_flat, dim=1)
     
+    # Identify filters with zero variance
+    zero_variance_indices = torch.where(variance == 0)[0]
+    if len(zero_variance_indices) > 0:
+        print("The following filters have zero variance:")
+        for idx in zero_variance_indices:
+            filter_weights = active_filters_flat[idx]
+            print(f"Filter at index {active_indices[idx].item()}: values = {filter_weights.tolist()}")
+    
+    # Check the number of valid filters (non-zero variance)
+    valid_indices = torch.where(variance > 0)[0]
+    if len(valid_indices) < 2:
+        warnings.warn("Fewer than 2 filters with non-zero variance found.")
+
+    # Continue calculations only with valid filters
+    active_filters_flat = active_filters_flat[valid_indices]
     mean = torch.mean(active_filters_flat, dim=1, keepdim=True)
     centered = active_filters_flat - mean
     cov_matrix = torch.matmul(centered, centered.t()) / (active_filters_flat.size(1) - 1)
+    std = torch.sqrt(variance[valid_indices])
 
-    var = torch.var(active_filters_flat, dim=1)
-    
-    if (var == 0).any():
-        print("Var is zero.")
-    
-    std = torch.sqrt(var + 1e-6)
-
-    std_outer = std.unsqueeze(1) * std.unsqueeze(0) 
-    correlation_matrix = cov_matrix / (std_outer )
+    epsilon = 1e-6
+    std_outer = std.unsqueeze(1) * std.unsqueeze(0)
+    correlation_matrix = cov_matrix / (std_outer + epsilon)
 
     if torch.isnan(correlation_matrix).any():
         warnings.warn("Correlation matrix contains NaN values.")
@@ -79,10 +91,9 @@ def compute_active_filters_correlation(filters, m):
     upper_tri = torch.triu(correlation_matrix, diagonal=1)
     sum_of_squares = torch.sum(torch.pow(upper_tri, 2))
 
-    num_active_filters = len(active_indices)
+    num_active_filters = len(valid_indices)
     normalized_correlation = sum_of_squares / num_active_filters
     return normalized_correlation, active_indices
-
 
 class MaskLoss(nn.Module):
     def __init__(self):
