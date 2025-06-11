@@ -217,6 +217,16 @@ print(f'Test Loss: {test_loss / len(test_loader):.4f}, Test Accuracy: {100 * cor
 val_data = dataset.loader_test.dataset.data
 transform_test = dataset.loader_test.dataset.transform
 
+if dataset_mode == '140k':
+    img_column = 'path'  
+elif dataset_mode == '200k':
+    img_column = 'filename' 
+else:
+    img_column = 'images_id'  
+
+if img_column not in val_data.columns:
+    raise KeyError(f"Column '{img_column}' not found in DataFrame. Available columns: {list(val_data.columns)}")
+
 random_indices = random.sample(range(len(val_data)), min(10, len(val_data)))
 fig, axes = plt.subplots(2, 5, figsize=(15, 8))
 axes = axes.ravel()
@@ -224,10 +234,20 @@ axes = axes.ravel()
 with torch.no_grad():
     for i, idx in enumerate(random_indices):
         row = val_data.iloc[idx]
-        img_column = 'path' if dataset_mode in ['140k', '200k'] else 'images_id'
         img_name = row[img_column]
         label = row['label']
-        img_path = os.path.join(data_dir, 'real_vs_fake', 'real-vs-fake', img_name) if dataset_mode in ['140k', '200k'] else os.path.join(data_dir, img_name)
+       
+        if dataset_mode == '140k':
+      
+            img_path = os.path.join(data_dir, img_name)
+        elif dataset_mode == '200k':
+     
+            subfolder = 'real' if label == 1 else 'ai_images'
+            img_path = os.path.join(data_dir, 'my_real_vs_ai_dataset', 'my_real_vs_ai_dataset', subfolder, img_name)
+        else:
+
+            img_path = os.path.join(data_dir, img_name)
+
         if not os.path.exists(img_path):
             print(f"Warning: Image not found: {img_path}")
             axes[i].set_title("Image not found")
