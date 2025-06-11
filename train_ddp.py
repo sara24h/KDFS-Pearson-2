@@ -162,24 +162,24 @@ class TrainDDP:
             realfake140k_valid_csv = os.path.join(self.dataset_dir, 'valid.csv')
             realfake140k_test_csv = os.path.join(self.dataset_dir, 'test.csv')
             realfake140k_root_dir = self.dataset_dir
-            realfake200k_train_csv = None
-            realfake200k_val_csv = None
-            realfake200k_test_csv = None
-            realfake200k_root_dir = None
-        elif self.dataset_mode == '200k':
-            hardfake_csv_file = None
-            hardfake_root_dir = None
-            rvf10k_train_csv = None
-            rvf10k_valid_csv = None
-            rvf10k_root_dir = None
-            realfake140k_train_csv = None
-            realfake140k_valid_csv = None
-            realfake140k_test_csv = None
-            realfake140k_root_dir = None
-            realfake200k_train_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/train_labels.csv"
-            realfake200k_val_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/val_labels.csv"
-            realfake200k_test_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/test_labels.csv"
-            realfake200k_root_dir = self.dataset_dir
+           # realfake200k_train_csv = None
+           # realfake200k_val_csv = None
+           # realfake200k_test_csv = None
+            #realfake200k_root_dir = None
+       # elif self.dataset_mode == '200k':
+        #    hardfake_csv_file = None
+         #   hardfake_root_dir = None
+          #  rvf10k_train_csv = None
+           # rvf10k_valid_csv = None
+          #  rvf10k_root_dir = None
+          #  realfake140k_train_csv = None
+           # realfake140k_valid_csv = None
+           # realfake140k_test_csv = None
+           # realfake140k_root_dir = None
+           # realfake200k_train_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/train_labels.csv"
+           # realfake200k_val_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/val_labels.csv"
+           # realfake200k_test_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/test_labels.csv"
+           # realfake200k_root_dir = self.dataset_dir
 
         if self.rank == 0:
             self.logger.info(f"Loading dataset: {self.dataset_mode}")
@@ -197,13 +197,13 @@ class TrainDDP:
                     raise FileNotFoundError(f"Valid CSV file not found: {realfake140k_valid_csv}")
                 if not os.path.exists(realfake140k_test_csv):
                     raise FileNotFoundError(f"Test CSV file not found: {realfake140k_test_csv}")
-            elif self.dataset_mode == '200k':
-                if not os.path.exists(realfake200k_train_csv):
-                    raise FileNotFoundError(f"Train CSV file not found: {realfake200k_train_csv}")
-                if not os.path.exists(realfake200k_val_csv):
-                    raise FileNotFoundError(f"Valid CSV file not found: {realfake200k_val_csv}")
-                if not os.path.exists(realfake200k_test_csv):
-                    raise FileNotFoundError(f"Test CSV file not found: {realfake200k_test_csv}")
+            #elif self.dataset_mode == '200k':
+             #   if not os.path.exists(realfake200k_train_csv):
+              #      raise FileNotFoundError(f"Train CSV file not found: {realfake200k_train_csv}")
+               # if not os.path.exists(realfake200k_val_csv):
+                #    raise FileNotFoundError(f"Valid CSV file not found: {realfake200k_val_csv}")
+                #if not os.path.exists(realfake200k_test_csv):
+                 #   raise FileNotFoundError(f"Test CSV file not found: {realfake200k_test_csv}")
 
         dataset_instance = Dataset_selector(
             dataset_mode=self.dataset_mode,
@@ -216,10 +216,10 @@ class TrainDDP:
             realfake140k_valid_csv=realfake140k_valid_csv,
             realfake140k_test_csv=realfake140k_test_csv,
             realfake140k_root_dir=realfake140k_root_dir,
-            realfake200k_train_csv=realfake200k_train_csv,
-            realfake200k_val_csv=realfake200k_val_csv,
-            realfake200k_test_csv=realfake200k_test_csv,
-            realfake200k_root_dir=realfake200k_root_dir,
+            #realfake200k_train_csv=realfake200k_train_csv,
+            #realfake200k_val_csv=realfake200k_val_csv,
+            #realfake200k_test_csv=realfake200k_test_csv,
+            #realfake200k_root_dir=realfake200k_root_dir,
             train_batch_size=self.train_batch_size,
             eval_batch_size=self.eval_batch_size,
             num_workers=self.num_workers,
