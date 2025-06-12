@@ -8,12 +8,8 @@ from PIL import Image
 from sklearn.model_selection import train_test_split
 import torchvision.transforms as transforms
 from torch.utils.data import Dataset, DataLoader
-
-# فرض می‌کنیم این ماژول‌ها در پروژه شما وجود دارند
 from utils import meter
 from get_flops_and_params import get_flops_and_params
-
-# مدل‌های ResNet فرضی
 from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k, ResNet_50_sparse_140k, ResNet_50_sparse_200k
 
 class FaceDataset(Dataset):
@@ -56,10 +52,10 @@ class Dataset_selector(Dataset):
         realfake140k_valid_csv=None,
         realfake140k_test_csv=None,
         realfake140k_root_dir=None,
-      #  realfake200k_train_csv=None,
-      #  realfake200k_valid_csv=None,
-       # realfake200k_test_csv=None,
-        #realfake200k_root_dir=None,
+        realfake200k_train_csv=None,
+        realfake200k_valid_csv=None,
+        realfake200k_test_csv=None,
+        realfake200k_root_dir=None,
         train_batch_size=32,
         eval_batch_size=32,
         num_workers=8,
@@ -85,8 +81,8 @@ class Dataset_selector(Dataset):
             mean = (0.5207, 0.4258, 0.3806)
             std = (0.2490, 0.2239, 0.2212)
         else:  # dataset_mode == '200k'
-            mean = (0.5207, 0.4258, 0.3806)  # فرض مشابه 140k، باید با داده واقعی جایگزین شود
-            std = (0.2490, 0.2239, 0.2212)   # فرض مشابه 140k، باید با داده واقعی جایگزین شود
+            mean = (0.5207, 0.4258, 0.3806)  
+            std = (0.2490, 0.2239, 0.2212)   
 
         # Define transforms
         transform_train = transforms.Compose([
@@ -181,7 +177,7 @@ class Dataset_selector(Dataset):
             train_data = pd.read_csv(realfake200k_train_csv)
             val_data = pd.read_csv(realfake200k_valid_csv)
             test_data = pd.read_csv(realfake200k_test_csv)
-            root_dir = realfake200k_root_dir  # فرض می‌کنیم ساختار مشابه 140k است
+            root_dir = realfake200k_root_dir 
 
             if 'path' not in train_data.columns:
                 raise ValueError("CSV files for 200k dataset must contain a 'path' column")
