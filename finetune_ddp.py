@@ -24,8 +24,8 @@ class FinetuneDDP:
             self.dataset_type = "rvf10k"
         elif self.dataset_mode == "140k":
             self.dataset_type = "140k"
-        #elif self.dataset_mode == "200k":
-         #   self.dataset_type = "200k"
+        elif self.dataset_mode == "200k":
+            self.dataset_type = "200k"
         else:
             raise ValueError(f"Unknown dataset_mode: {self.dataset_mode}")
         self.num_workers = args.num_workers
