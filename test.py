@@ -8,36 +8,35 @@ from PIL import Image
 from sklearn.model_selection import train_test_split
 import torchvision.transforms as transforms
 from torch.utils.data import Dataset, DataLoader
-from utils import meter  
-from get_flops_and_params import get_flops_and_params  
-from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal  
+
+
+from utils import meter
+from get_flops_and_params import get_flops_and_params
+
+# مدل‌های ResNet فرضی
+from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k, ResNet_50_sparse_140k, ResNet_50_sparse_200k
 
 class FaceDataset(Dataset):
-    def __init__(self, data_frame, root_dir, transform=None, split='train'):
+    def __init__(self, data_frame, root_dir, transform=None, img_column='images_id'):
         self.data = data_frame
         self.root_dir = root_dir
         self.transform = transform
-        self.split = split
-        self.label_map = {1: 1, 0: 0, 'real': 1, 'Real': 1, 'fake': 0, 'Fake': 0, 'ai': 0, 'AI': 0}
+        self.img_column = img_column
+        self.label_map = {1: 1, 0: 0, 'real': 1, 'fake': 0, 'Real': 1, 'Fake': 0}
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
-
-        folder = 'real' if self.data['label'].iloc[idx] in [1, 'real', 'Real'] else 'ai_images'
-
-        img_name = os.path.join(self.root_dir, folder, self.data['filename'].iloc[idx])
-        
+        img_name = os.path.join(self.root_dir, self.data[self.img_column].iloc[idx])
         if not os.path.exists(img_name):
             print(f"Warning: Image not found: {img_name}")
-            image_size = 256
+            image_size = 256 if any(mode in self.root_dir for mode in ['140k', '200k']) else 300
             image = Image.new('RGB', (image_size, image_size), color='black')
             label = self.label_map[self.data['label'].iloc[idx]]
             if self.transform:
                 image = self.transform(image)
             return image, torch.tensor(label, dtype=torch.float)
-        
         image = Image.open(img_name).convert('RGB')
         label = self.label_map[self.data['label'].iloc[idx]]
         if self.transform:
@@ -47,7 +46,7 @@ class FaceDataset(Dataset):
 class Dataset_selector(Dataset):
     def __init__(
         self,
-        dataset_mode,
+        dataset_mode,  # 'hardfake', 'rvf10k', '140k', '200k'
         hardfake_csv_file=None,
         hardfake_root_dir=None,
         rvf10k_train_csv=None,
@@ -57,10 +56,10 @@ class Dataset_selector(Dataset):
         realfake140k_valid_csv=None,
         realfake140k_test_csv=None,
         realfake140k_root_dir=None,
-        realfake200k_train_csv=None,
-        realfake200k_valid_csv=None,
-        realfake200k_test_csv=None,
-        realfake200k_root_dir=None,
+      #  realfake200k_train_csv=None,
+      #  realfake200k_valid_csv=None,
+       # realfake200k_test_csv=None,
+        #realfake200k_root_dir=None,
         train_batch_size=32,
         eval_batch_size=32,
         num_workers=8,
@@ -71,8 +70,11 @@ class Dataset_selector(Dataset):
             raise ValueError("dataset_mode must be 'hardfake', 'rvf10k', '140k', or '200k'")
 
         self.dataset_mode = dataset_mode
+
+        # Define image size based on dataset_mode
         image_size = (256, 256) if dataset_mode in ['rvf10k', '140k', '200k'] else (300, 300)
 
+        # Define mean and std based on dataset_mode
         if dataset_mode == 'hardfake':
             mean = (0.5124, 0.4165, 0.3684)
             std = (0.2363, 0.2087, 0.2029)
@@ -83,9 +85,10 @@ class Dataset_selector(Dataset):
             mean = (0.5207, 0.4258, 0.3806)
             std = (0.2490, 0.2239, 0.2212)
         else:  # dataset_mode == '200k'
-            mean = (0.5207, 0.4258, 0.3806)
-            std = (0.2490, 0.2239, 0.2212)
+            mean = (0.5207, 0.4258, 0.3806)  
+            std = (0.2490, 0.2239, 0.2212)   
 
+        # Define transforms
         transform_train = transforms.Compose([
             transforms.Resize(image_size),
             transforms.RandomHorizontalFlip(p=0.5),
@@ -103,58 +106,119 @@ class Dataset_selector(Dataset):
             transforms.Normalize(mean=mean, std=std),
         ])
 
-        if dataset_mode == '200k':
-            if not realfake200k_train_csv or not realfake200k_valid_csv or not realfake200k_test_csv or not realfake200k_root_dir:
-                raise ValueError("realfake200k_train_csv, realfake200k_valid_csv, realfake200k_test_csv, and realfake200k_root_dir must be provided")
-            train_data = pd.read_csv(realfake200k_train_csv)
-            val_data = pd.read_csv(realfake200k_valid_csv)
-            test_data = pd.read_csv(realfake200k_test_csv)
-            root_dir = realfake200k_root_dir
+        # Set img_column based on dataset_mode
+        img_column = 'path' if dataset_mode in ['140k', '200k'] else 'images_id'
 
-            print("Columns in train_data:", train_data.columns.tolist())
-            print("Columns in val_data:", val_data.columns.tolist())
-            print("Columns in test_data:", test_data.columns.tolist())
+        # Load data based on dataset_mode
+        if dataset_mode == 'hardfake':
+            if not hardfake_csv_file or not hardfake_root_dir:
+                raise ValueError("hardfake_csv_file and hardfake_root_dir must be provided")
+            full_data = pd.read_csv(hardfake_csv_file)
 
-            for data in [train_data, val_data, test_data]:
-                if 'image_id' in data.columns:
-                    data.rename(columns={'image_id': 'filename'}, inplace=True)
-                if 'class' in data.columns:
-                    data.rename(columns={'class': 'label'}, inplace=True)
+            def create_image_path(row):
+                folder = 'fake' if row['label'] == 'fake' else 'real'
+                img_name = row['images_id']
+                img_name = os.path.basename(img_name)
+                if not img_name.endswith('.jpg'):
+                    img_name += '.jpg'
+                return os.path.join(folder, img_name)
+
+            full_data['images_id'] = full_data.apply(create_image_path, axis=1)
+            root_dir = hardfake_root_dir
+
+            train_data, temp_data = train_test_split(
+                full_data, test_size=0.3, stratify=full_data['label'], random_state=3407
+            )
+            val_data, test_data = train_test_split(
+                temp_data, test_size=0.5, stratify=temp_data['label'], random_state=3407
+            )
+            train_data = train_data.reset_index(drop=True)
+            val_data = val_data.reset_index(drop=True)
+            test_data = test_data.reset_index(drop=True)
+
+        elif dataset_mode == 'rvf10k':
+            if not rvf10k_train_csv or not rvf10k_valid_csv or not rvf10k_root_dir:
+                raise ValueError("rvf10k_train_csv, rvf10k_valid_csv, and rvf10k_root_dir must be provided")
+            train_data = pd.read_csv(rvf10k_train_csv)
+
+            def create_image_path(row, split='train'):
+                folder = 'fake' if row['label'] == 0 else 'real'
+                img_name = row['id']
+                img_name = os.path.basename(img_name)
+                if not img_name.endswith('.jpg'):
+                    img_name += '.jpg'
+                return os.path.join('rvf10k', split, folder, img_name)
+
+            train_data['images_id'] = train_data.apply(lambda row: create_image_path(row, 'train'), axis=1)
+            valid_data = pd.read_csv(rvf10k_valid_csv)
+            valid_data['images_id'] = valid_data.apply(lambda row: create_image_path(row, 'valid'), axis=1)
+
+            val_data, test_data = train_test_split(
+                valid_data, test_size=0.5, stratify=valid_data['label'], random_state=3407
+            )
+            val_data = val_data.reset_index(drop=True)
+            test_data = test_data.reset_index(drop=True)
+            root_dir = rvf10k_root_dir
+
+        elif dataset_mode == '140k':
+            if not realfake140k_train_csv or not realfake140k_valid_csv or not realfake140k_test_csv or not realfake140k_root_dir:
+                raise ValueError("realfake140k_train_csv, realfake140k_valid_csv, realfake140k_test_csv, and realfake140k_root_dir must be provided")
+            train_data = pd.read_csv(realfake140k_train_csv)
+            val_data = pd.read_csv(realfake140k_valid_csv)
+            test_data = pd.read_csv(realfake140k_test_csv)
+            root_dir = os.path.join(realfake140k_root_dir, 'real_vs_fake', 'real-vs-fake')
+
+            if 'path' not in train_data.columns:
+                raise ValueError("CSV files for 140k dataset must contain a 'path' column")
 
             train_data = train_data.sample(frac=1, random_state=3407).reset_index(drop=True)
             val_data = val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
             test_data = test_data.sample(frac=1, random_state=3407).reset_index(drop=True)
 
-        else:
-            raise ValueError(f"Unsupported dataset_mode: {dataset_mode}")
+        else:  # dataset_mode == '200k'
+            if not realfake200k_train_csv or not realfake200k_valid_csv or not realfake200k_test_csv or not realfake200k_root_dir:
+                raise ValueError("realfake200k_train_csv, realfake200k_valid_csv, realfake200k_test_csv, and realfake200k_root_dir must be provided")
+            train_data = pd.read_csv(realfake200k_train_csv)
+            val_data = pd.read_csv(realfake200k_valid_csv)
+            test_data = pd.read_csv(realfake200k_test_csv)
+            root_dir = realfake200k_root_dir 
 
+            if 'path' not in train_data.columns:
+                raise ValueError("CSV files for 200k dataset must contain a 'path' column")
+
+            train_data = train_data.sample(frac=1, random_state=3407).reset_index(drop=True)
+            val_data = val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
+            test_data = test_data.sample(frac=1, random_state=3407).reset_index(drop=True)
+
+        # Debug: Print data statistics
         print(f"{dataset_mode} dataset statistics:")
-        print(f"Sample train filenames:\n{train_data['filename'].head()}")
+        print(f"Sample train image paths:\n{train_data[img_column].head()}")
         print(f"Total train dataset size: {len(train_data)}")
         print(f"Train label distribution:\n{train_data['label'].value_counts()}")
-        print(f"Sample validation filenames:\n{val_data['filename'].head()}")
+        print(f"Sample validation image paths:\n{val_data[img_column].head()}")
         print(f"Total validation dataset size: {len(val_data)}")
         print(f"Validation label distribution:\n{val_data['label'].value_counts()}")
-        print(f"Sample test filenames:\n{test_data['filename'].head()}")
+        print(f"Sample test image paths:\n{test_data[img_column].head()}")
         print(f"Total test dataset size: {len(test_data)}")
         print(f"Test label distribution:\n{test_data['label'].value_counts()}")
 
-        # بررسی تصاویر گمشده
+        # Check for missing images
         for split, data in [('train', train_data), ('validation', val_data), ('test', test_data)]:
             missing_images = []
-            for idx in range(len(data)):
-                folder = 'real' if data['label'].iloc[idx] in [1, 'real', 'Real'] else 'ai_images'
-                img_path = os.path.join(root_dir, folder, data['filename'].iloc[idx])
-                if not os.path.exists(img_path):
-                    missing_images.append(img_path)
+            for img_path in data[img_column]:
+                full_path = os.path.join(root_dir, img_path)
+                if not os.path.exists(full_path):
+                    missing_images.append(full_path)
             if missing_images:
                 print(f"Missing {split} images: {len(missing_images)}")
                 print(f"Sample missing {split} images:", missing_images[:5])
 
-        train_dataset = FaceDataset(train_data, root_dir, transform=transform_train, split='train')
-        val_dataset = FaceDataset(val_data, root_dir, transform=transform_test, split='valid')
-        test_dataset = FaceDataset(test_data, root_dir, transform=transform_test, split='test')
+        # Create datasets
+        train_dataset = FaceDataset(train_data, root_dir, transform=transform_train, img_column=img_column)
+        val_dataset = FaceDataset(val_data, root_dir, transform=transform_test, img_column=img_column)
+        test_dataset = FaceDataset(test_data, root_dir, transform=transform_test, img_column=img_column)
 
+        # Create data loaders
         if ddp:
             train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=True)
             val_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset, shuffle=False)
@@ -204,10 +268,12 @@ class Dataset_selector(Dataset):
                 pin_memory=pin_memory,
             )
 
+        # Debug: Print loader sizes
         print(f"Train loader batches: {len(self.loader_train)}")
         print(f"Validation loader batches: {len(self.loader_val)}")
         print(f"Test loader batches: {len(self.loader_test)}")
 
+        # Test a sample batch
         for loader, name in [(self.loader_train, 'train'), (self.loader_val, 'validation'), (self.loader_test, 'test')]:
             try:
                 sample = next(iter(loader))
@@ -216,30 +282,87 @@ class Dataset_selector(Dataset):
             except Exception as e:
                 print(f"Error loading sample {name} batch: {e}")
 
-class Trainer:
+class Trainer:  # تغییر نام کلاس از Test به Trainer
     def __init__(self, args):
         self.args = args
         self.dataset_dir = args.dataset_dir
         self.num_workers = args.num_workers
         self.pin_memory = args.pin_memory
-        self.arch = args.arch
+        self.arch = args.arch  # Expected to be 'ResNet_50'
         self.device = args.device
         self.test_batch_size = args.test_batch_size
         self.sparsed_student_ckpt_path = args.sparsed_student_ckpt_path
-        self.dataset_mode = args.dataset_mode
+        self.dataset_mode = args.dataset_mode  # 'hardfake', 'rvf10k', '140k', '200k'
 
+        # Verify CUDA availability
         if self.device == 'cuda' and not torch.cuda.is_available():
             raise RuntimeError("CUDA is not available! Please check GPU setup.")
 
     def dataload(self):
         print("==> Loading test dataset..")
         try:
-            if self.dataset_mode == '200k':
+            # Verify dataset paths
+            if self.dataset_mode == 'hardfake':
+                csv_path = os.path.join(self.dataset_dir, 'data.csv')
+                if not os.path.exists(csv_path):
+                    raise FileNotFoundError(f"CSV file not found: {csv_path}")
+            elif self.dataset_mode == 'rvf10k':
+                train_csv = os.path.join(self.dataset_dir, 'train.csv')
+                valid_csv = os.path.join(self.dataset_dir, 'valid.csv')
+                if not os.path.exists(train_csv) or not os.path.exists(valid_csv):
+                    raise FileNotFoundError(f"CSV files not found: {train_csv}, {valid_csv}")
+            elif self.dataset_mode == '140k':
+                test_csv = os.path.join(self.dataset_dir, 'test.csv')
+                if not os.path.exists(test_csv):
+                    raise FileNotFoundError(f"CSV file not found: {test_csv}")
+            elif self.dataset_mode == '200k':
+                test_csv = os.path.join(self.dataset_dir, 'test.csv')
+                if not os.path.exists(test_csv):
+                    raise FileNotFoundError(f"CSV file not found: {test_csv}")
+
+            # Initialize dataset based on mode
+            if self.dataset_mode == 'hardfake':
+                dataset = Dataset_selector(
+                    dataset_mode='hardfake',
+                    hardfake_csv_file=os.path.join(self.dataset_dir, 'data.csv'),
+                    hardfake_root_dir=self.dataset_dir,
+                    train_batch_size=self.test_batch_size,
+                    eval_batch_size=self.test_batch_size,
+                    num_workers=self.num_workers,
+                    pin_memory=self.pin_memory,
+                    ddp=False
+                )
+            elif self.dataset_mode == 'rvf10k':
+                dataset = Dataset_selector(
+                    dataset_mode='rvf10k',
+                    rvf10k_train_csv=os.path.join(self.dataset_dir, 'train.csv'),
+                    rvf10k_valid_csv=os.path.join(self.dataset_dir, 'valid.csv'),
+                    rvf10k_root_dir=self.dataset_dir,
+                    train_batch_size=self.test_batch_size,
+                    eval_batch_size=self.test_batch_size,
+                    num_workers=self.num_workers,
+                    pin_memory=self.pin_memory,
+                    ddp=False
+                )
+            elif self.dataset_mode == '140k':
+                dataset = Dataset_selector(
+                    dataset_mode='140k',
+                    realfake140k_train_csv=os.path.join(self.dataset_dir, 'train.csv'),
+                    realfake140k_valid_csv=os.path.join(self.dataset_dir, 'valid.csv'),
+                    realfake140k_test_csv=os.path.join(self.dataset_dir, 'test.csv'),
+                    realfake140k_root_dir=self.dataset_dir,
+                    train_batch_size=self.test_batch_size,
+                    eval_batch_size=self.test_batch_size,
+                    num_workers=self.num_workers,
+                    pin_memory=self.pin_memory,
+                    ddp=False
+                )
+            elif self.dataset_mode == '200k':
                 dataset = Dataset_selector(
                     dataset_mode='200k',
-                    realfake200k_train_csv=os.path.join("/kaggle/input/200k-real-vs-ai-visuals-by-mbilal", 'train_labels.csv'),
-                    realfake200k_valid_csv=os.path.join("/kaggle/input/200k-real-vs-ai-visuals-by-mbilal", 'val_labels.csv'),
-                    realfake200k_test_csv=os.path.join("/kaggle/input/200k-real-vs-ai-visuals-by-mbilal", 'test_labels.csv'),
+                    realfake200k_train_csv=os.path.join(self.dataset_dir, 'train.csv'),
+                    realfake200k_valid_csv=os.path.join(self.dataset_dir, 'valid.csv'),
+                    realfake200k_test_csv=os.path.join(self.dataset_dir, 'test.csv'),
                     realfake200k_root_dir=self.dataset_dir,
                     train_batch_size=self.test_batch_size,
                     eval_batch_size=self.test_batch_size,
@@ -247,8 +370,6 @@ class Trainer:
                     pin_memory=self.pin_memory,
                     ddp=False
                 )
-            else:
-                raise ValueError(f"Unsupported dataset_mode: {self.dataset_mode}")
 
             self.test_loader = dataset.loader_test
             print(f"{self.dataset_mode} test dataset loaded! Total batches: {len(self.test_loader)}")
@@ -260,8 +381,16 @@ class Trainer:
         print("==> Building student model..")
         try:
             print(f"Loading sparse student model for dataset mode: {self.dataset_mode}")
-            self.student = ResNet_50_sparse_hardfakevsreal()
+            if self.dataset_mode == 'hardfake':
+                self.student = ResNet_50_sparse_hardfakevsreal()
+            elif self.dataset_mode == 'rvf10k':
+                self.student =ResNet_50_sparse_hardfakevsreal()
+            elif self.dataset_mode == '140k':
+                self.student = ResNet_50_sparse_hardfakevsreal()
+            elif self.dataset_mode == '200k':
+                self.student = ResNet_50_sparse_hardfakevsreal()
 
+            # Load checkpoint
             if not os.path.exists(self.sparsed_student_ckpt_path):
                 raise FileNotFoundError(f"Checkpoint file not found: {self.sparsed_student_ckpt_path}")
             ckpt_student = torch.load(self.sparsed_student_ckpt_path, map_location="cpu", weights_only=True)
@@ -284,7 +413,7 @@ class Trainer:
         meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
 
         self.student.eval()
-        self.student.ticket = True
+        self.student.ticket = True  # Enable ticket mode for sparse model
         try:
             with torch.no_grad():
                 with tqdm(total=len(self.test_loader), ncols=100, desc="Test") as _tqdm:
@@ -304,8 +433,9 @@ class Trainer:
                         _tqdm.update(1)
                         time.sleep(0.01)
 
-            print(f"[Test completed] Dataset: {self.dataset_mode}, Prec@1: {meter_top1.avg:.2f}%")
+            print(f"[Test] Dataset: {self.dataset_mode}, Prec@1: {meter_top1.avg:.2f}%")
 
+            # Calculate FLOPs and parameters
             (
                 Flops_baseline,
                 Flops,
@@ -315,12 +445,12 @@ class Trainer:
                 Params_reduction,
             ) = get_flops_and_params(args=self.args)
             print(
-                f"Parameters_baseline: {Params_baseline:.2f}M, Parameters: {Params:.2f}M, "
-                f"Parameters reduction: {Params_reduction:.2f}%"
+                f"Params_baseline: {Params_baseline:.2f}M, Params: {Params:.2f}M, "
+                f"Params reduction: {Params_reduction:.2f}%"
             )
             print(
-                f"Flops_baseline: {Flops_baseline:.1f}M, Flops: {Flops:.2f}M, "
-                f"Flops reduction: {Flops_reduction:.4f}%"
+                f"Flops_baseline: {Flops_baseline:.2f}M, Flops: {Flops:.2f}M, "
+                f"Flops reduction: {Flops_reduction:.2f}%"
             )
            
         except Exception as e:
@@ -340,28 +470,5 @@ class Trainer:
             self.build_model()
             self.test()
         except Exception as e:
-            print(f"Error executing in test pipeline: {str(e)}")
+            print(f"Error in test pipeline: {str(e)}")
             raise
-
-def main():
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-    os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
-    torch.cuda.empty_cache()
-
-    class Args:
-        dataset_dir = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/my_real_vs_ai/images/"
-        num_workers = 4
-        pin_memory = True
-        arch = "ResNet_50"
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        test_batch_size = 32
-        sparsed_student_ckpt_path = "/kaggle/input/kdfs-22-khordad-200k-data/results/run_resnet50_imagenet_prune1/images/student_model/ResNet_50_sparse_best.pt"
-        dataset_mode = "200k"
-
-    args = Args()
-
-    trainer = Trainer(args)
-    trainer.main()
-
-if __name__ == "__main__":
-    main()
