@@ -8,9 +8,9 @@ from PIL import Image
 from sklearn.model_selection import train_test_split
 import torchvision.transforms as transforms
 from torch.utils.data import Dataset, DataLoader
-from utils import meter  # فرض بر اینه که وجود داره
-from get_flops_and_params import get_flops_and_params  # فرض بر اینه که وجود داره
-from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal  # تنظیم بر اساس نیاز
+from utils import meter  # Assumed to exist
+from get_flops_and_params import get_flops_and_params  # Assumed to exist
+from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal  # Adjust as needed
 
 class FaceDataset(Dataset):
     def __init__(self, data_frame, root_dir, transform=None, img_column='path'):
@@ -67,10 +67,8 @@ class Dataset_selector(Dataset):
 
         self.dataset_mode = dataset_mode
 
-        # تعریف اندازه تصویر بر اساس dataset_mode
         image_size = (256, 256) if dataset_mode in ['rvf10k', '140k', '200k'] else (300, 300)
 
-        # تعریف میانگین و انحراف معیار بر اساس dataset_mode
         if dataset_mode == 'hardfake':
             mean = (0.5124, 0.4165, 0.3684)
             std = (0.2363, 0.2087, 0.2029)
@@ -84,7 +82,6 @@ class Dataset_selector(Dataset):
             mean = (0.5207, 0.4258, 0.3806)
             std = (0.2490, 0.2239, 0.2212)
 
-        # تعریف تبدیل‌ها
         transform_train = transforms.Compose([
             transforms.Resize(image_size),
             transforms.RandomHorizontalFlip(p=0.5),
@@ -102,10 +99,8 @@ class Dataset_selector(Dataset):
             transforms.Normalize(mean=mean, std=std),
         ])
 
-        # تنظیم img_column
         img_column = 'path'
 
-        # بارگذاری داده‌ها بر اساس dataset_mode
         if dataset_mode == 'hardfake':
             if not hardfake_csv_file or not hardfake_root_dir:
                 raise ValueError("hardfake_csv_file and hardfake_root_dir must be provided")
@@ -179,7 +174,6 @@ class Dataset_selector(Dataset):
             test_data = pd.read_csv(realfake200k_test_csv)
             root_dir = realfake200k_root_dir
 
-            # ساخت ستون path با استفاده از filename
             def create_image_path(row, split):
                 folder = 'real' if row['label'] in [1, 'real', 'Real'] else 'fake'
                 return os.path.join(root_dir, split, folder, row['filename'])
@@ -188,7 +182,6 @@ class Dataset_selector(Dataset):
             val_data['path'] = val_data.apply(lambda row: create_image_path(row, 'valid'), axis=1)
             test_data['path'] = test_data.apply(lambda row: create_image_path(row, 'test'), axis=1)
 
-            # ذخیره فایل‌های CSV در مسیر قابل نوشتن
             output_dir = "/kaggle/working/KDFS-Pearson-2/"
             os.makedirs(output_dir, exist_ok=True)
             train_data.to_csv(os.path.join(output_dir, 'train_labels.csv'), index=False)
@@ -199,7 +192,6 @@ class Dataset_selector(Dataset):
             val_data = val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
             test_data = test_data.sample(frac=1, random_state=3407).reset_index(drop=True)
 
-        # دیباگ: چاپ آمار داده‌ها
         print(f"{dataset_mode} dataset statistics:")
         print(f"Sample train image paths:\n{train_data[img_column].head()}")
         print(f"Total train dataset size: {len(train_data)}")
@@ -211,7 +203,6 @@ class Dataset_selector(Dataset):
         print(f"Total test dataset size: {len(test_data)}")
         print(f"Test label distribution:\n{test_data['label'].value_counts()}")
 
-        # بررسی تصاویر گمشده
         for split, data in [('train', train_data), ('validation', val_data), ('test', test_data)]:
             missing_images = []
             for img_path in data[img_column]:
@@ -222,12 +213,10 @@ class Dataset_selector(Dataset):
                 print(f"Missing {split} images: {len(missing_images)}")
                 print(f"Sample missing {split} images:", missing_images[:5])
 
-        # ایجاد دیتاست‌ها
         train_dataset = FaceDataset(train_data, root_dir, transform=transform_train, img_column=img_column)
         val_dataset = FaceDataset(val_data, root_dir, transform=transform_test, img_column=img_column)
         test_dataset = FaceDataset(test_data, root_dir, transform=transform_test, img_column=img_column)
 
-        # ایجاد دیتالودرها
         if ddp:
             train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=True)
             val_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset, shuffle=False)
@@ -277,12 +266,10 @@ class Dataset_selector(Dataset):
                 pin_memory=pin_memory,
             )
 
-        # دیباگ: چاپ اندازه دیتالودرها
         print(f"Train loader batches: {len(self.loader_train)}")
         print(f"Validation loader batches: {len(self.loader_val)}")
         print(f"Test loader batches: {len(self.loader_test)}")
 
-        # تست یک نمونه بچ
         for loader, name in [(self.loader_train, 'train'), (self.loader_val, 'validation'), (self.loader_test, 'test')]:
             try:
                 sample = next(iter(loader))
@@ -303,14 +290,12 @@ class Trainer:
         self.sparsed_student_ckpt_path = args.sparsed_student_ckpt_path
         self.dataset_mode = args.dataset_mode
 
-        # بررسی در دسترس بودن CUDA
         if self.device == 'cuda' and not torch.cuda.is_available():
             raise RuntimeError("CUDA is not available! Please check GPU setup.")
 
     def dataload(self):
         print("==> Loading test dataset..")
         try:
-            # بررسی مسیرهای دیتاست
             if self.dataset_mode == 'hardfake':
                 csv_path = os.path.join(self.dataset_dir, 'data.csv')
                 if not os.path.exists(csv_path):
@@ -329,7 +314,6 @@ class Trainer:
                 if not os.path.exists(test_csv):
                     raise FileNotFoundError(f"CSV file not found: {test_csv}")
 
-            # مقداردهی اولیه دیتاست بر اساس حالت
             if self.dataset_mode == 'hardfake':
                 dataset = Dataset_selector(
                     dataset_mode='hardfake',
@@ -399,7 +383,6 @@ class Trainer:
             elif self.dataset_mode == '200k':
                 self.student = ResNet_50_sparse_hardfakevsreal()
 
-            # بارگذاری چک‌پوینت
             if not os.path.exists(self.sparsed_student_ckpt_path):
                 raise FileNotFoundError(f"Checkpoint file not found: {self.sparsed_student_ckpt_path}")
             ckpt_student = torch.load(self.sparsed_student_ckpt_path, map_location="cpu", weights_only=True)
@@ -422,7 +405,7 @@ class Trainer:
         meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
 
         self.student.eval()
-        self.student.ticket = True  # فعال کردن حالت ticket برای مدل sparse
+        self.student.ticket = True
         try:
             with torch.no_grad():
                 with tqdm(total=len(self.test_loader), ncols=100, desc="Test") as _tqdm:
@@ -444,7 +427,6 @@ class Trainer:
 
             print(f"[Test completed] Dataset: {self.dataset_mode}, Prec@1: {meter_top1.avg:.2f}%")
 
-            # محاسبه FLOPs و پارامترها
             (
                 Flops_baseline,
                 Flops,
@@ -483,10 +465,10 @@ class Trainer:
             raise
 
 def main():
-    # پاک کردن کش CUDA برای رفع خطاهای cuFFT/cuDNN/cuBLAS
+    # Set environment variable to mitigate CUDA errors
+    os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
     torch.cuda.empty_cache()
-    
-    # تعریف آرگومان‌ها
+
     class Args:
         dataset_dir = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/my_real_vs_ai_dataset/my_real_vs_ai_dataset/"
         num_workers = 4
@@ -494,17 +476,16 @@ def main():
         arch = "ResNet_50"
         device = "cuda" if torch.cuda.is_available() else "cpu"
         test_batch_size = 16
-        sparsed_student_ckpt_path = "/kaggle/input/kdfs-22-k/test/test_khordad-200k-data/results/run_results/run_resnet50/run_resnet_imagenet_imagenet/prune1/test_images/student_data/student_model/ResNet_S0_sparse_best.pt"
+        sparsed_student_ckpt_path = "/kaggle/input/kdfs-22-khordad-200k-data/results/run_resnet50_imagenet_prune1/student_model/ResNet_50_sparse_best.pt"
         dataset_mode = "200k"
 
     args = Args()
 
-    # کپی فایل‌های CSV به دایرکتوری کاری
     os.makedirs("/kaggle/working/KDFS-Pearson-2/", exist_ok=True)
     input_csv_files = [
-        "/kaggle/input/200k-real-vs-real-vs-ai-visuals/test_images/run_results/kaggle/input/test_bilal/train_images.csv_labels.csv",
-        "/kaggle/input/200k-real-vs-ai-visuals/test/bilal/val_labels.csv",
-        "/kaggle/input/200k-real-vs-ai-visuals/test_bilal/test_labels.csv"
+        "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/train_labels.csv",
+        "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/val_labels.csv",
+        "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/test_labels.csv"
     ]
     output_csv_files = [
         "/kaggle/working/KDFS-Pearson-2/train_labels.csv",
@@ -514,16 +495,13 @@ def main():
 
     for input_csv, output_csv in zip(input_csv_files, output_csv_files):
         if os.path.exists(input_csv):
-            os.system(f"cp {input_csv} {to output_csv}")
-            print(f"Successfully copied {input_csv} copied to {output_csv}")
+            os.system(f"cp {input_csv} {output_csv}")
+            print(f"Successfully copied {input_csv} to {output_csv}")
         else:
             print(f"Warning: CSV file not found: {input_csv}")
 
-    # اجرای Trainer
     trainer = Trainer(args)
     trainer.main()
 
-if __name__
-
-    == "__main__":
+if __name__ == "__main__":
     main()
