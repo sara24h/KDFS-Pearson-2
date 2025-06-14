@@ -8,41 +8,12 @@ from PIL import Image
 from sklearn.model_selection import train_test_split
 import torchvision.transforms as transforms
 from torch.utils.data import Dataset, DataLoader
-from utils import meter  # Assuming this exists
-from get_flops_and_params import get_flops_and_params  # Assuming this exists
-from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal  # Adjust as needed
-
-# Step 1: Preprocess CSV files to add 'path' column
-def preprocess_csv_files():
-    # Define the root directory where images are stored
-    image_root_dir = "/kaggle/input/realfake200k/real_vs_fake/real-vs-fake/"
-
-    # List of CSV files and their corresponding splits
-    csv_files = [
-        ("/kaggle/working/KDFS-Pearson-2/train_labels.csv", "train"),
-        ("/kaggle/working/KDFS-Pearson-2/val_labels.csv", "valid"),
-        ("/kaggle/working/KDFS-Pearson-2/test_labels.csv", "test")
-    ]
-
-    for csv_file, split in csv_files:
-        if not os.path.exists(csv_file):
-            print(f"Warning: CSV file not found: {csv_file}")
-            continue
-        # Load the CSV file
-        df = pd.read_csv(csv_file)
-        
-        # Create the 'path' column by combining the root directory, split, and filename
-        df['path'] = df['filename'].apply(lambda x: os.path.join(image_root_dir, split, x))
-        
-        # Save the modified CSV
-        df.to_csv(csv_file, index=False)
-        print(f"Updated {csv_file} with 'path' column")
-        
-        # Verify the first few paths
-        print(f"Sample paths from {csv_file}:\n{df['path'].head()}")
+from utils import meter  
+from get_flops_and_params import get_flops_and_params 
+from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal  
 
 class FaceDataset(Dataset):
-    def __init__(self, data_frame, root_dir, transform=None, img_column='images_id'):
+    def __init__(self, data_frame, root_dir, transform=None, img_column='path'):
         self.data = data_frame
         self.root_dir = root_dir
         self.transform = transform
@@ -96,10 +67,8 @@ class Dataset_selector(Dataset):
 
         self.dataset_mode = dataset_mode
 
-        # Define image size based on dataset_mode
         image_size = (256, 256) if dataset_mode in ['rvf10k', '140k', '200k'] else (300, 300)
-
-        # Define mean and std based on dataset_mode
+        
         if dataset_mode == 'hardfake':
             mean = (0.5124, 0.4165, 0.3684)
             std = (0.2363, 0.2087, 0.2029)
@@ -110,10 +79,9 @@ class Dataset_selector(Dataset):
             mean = (0.5207, 0.4258, 0.3806)
             std = (0.2490, 0.2239, 0.2212)
         else:  # dataset_mode == '200k'
-            mean = (0.5207, 0.4258, 0.3806)  
-            std = (0.2490, 0.2239, 0.2212)   
+            mean = (0.5207, 0.4258, 0.3806)
+            std = (0.2490, 0.2239, 0.2212)
 
-        # Define transforms
         transform_train = transforms.Compose([
             transforms.Resize(image_size),
             transforms.RandomHorizontalFlip(p=0.5),
@@ -131,10 +99,8 @@ class Dataset_selector(Dataset):
             transforms.Normalize(mean=mean, std=std),
         ])
 
-        # Set img_column based on dataset_mode
-        img_column = 'path' if dataset_mode in ['140k', '200k'] else 'images_id'
+        img_column = 'path'
 
-        # Load data based on dataset_mode
         if dataset_mode == 'hardfake':
             if not hardfake_csv_file or not hardfake_root_dir:
                 raise ValueError("hardfake_csv_file and hardfake_root_dir must be provided")
@@ -208,14 +174,22 @@ class Dataset_selector(Dataset):
             test_data = pd.read_csv(realfake200k_test_csv)
             root_dir = realfake200k_root_dir
 
-            if 'path' not in train_data.columns:
-                raise ValueError("CSV files for 200k dataset must contain a 'path' column")
+            def create_image_path(row, split):
+                folder = 'real' if row['label'] in [1, 'real', 'Real'] else 'fake'
+                return os.path.join(root_dir, split, folder, row['filename'])
+
+            train_data['path'] = train_data.apply(lambda row: create_image_path(row, 'train'), axis=1)
+            val_data['path'] = val_data.apply(lambda row: create_image_path(row, 'valid'), axis=1)
+            test_data['path'] = test_data.apply(lambda row: create_image_path(row, 'test'), axis=1)
+
+            train_data.to_csv(realfake200k_train_csv, index=False)
+            val_data.to_csv(realfake200k_valid_csv, index=False)
+            test_data.to_csv(realfake200k_test_csv, index=False)
 
             train_data = train_data.sample(frac=1, random_state=3407).reset_index(drop=True)
             val_data = val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
             test_data = test_data.sample(frac=1, random_state=3407).reset_index(drop=True)
 
-        # Debug: Print data statistics
         print(f"{dataset_mode} dataset statistics:")
         print(f"Sample train image paths:\n{train_data[img_column].head()}")
         print(f"Total train dataset size: {len(train_data)}")
@@ -227,7 +201,6 @@ class Dataset_selector(Dataset):
         print(f"Total test dataset size: {len(test_data)}")
         print(f"Test label distribution:\n{test_data['label'].value_counts()}")
 
-        # Check for missing images
         for split, data in [('train', train_data), ('validation', val_data), ('test', test_data)]:
             missing_images = []
             for img_path in data[img_column]:
@@ -238,12 +211,10 @@ class Dataset_selector(Dataset):
                 print(f"Missing {split} images: {len(missing_images)}")
                 print(f"Sample missing {split} images:", missing_images[:5])
 
-        # Create datasets
         train_dataset = FaceDataset(train_data, root_dir, transform=transform_train, img_column=img_column)
         val_dataset = FaceDataset(val_data, root_dir, transform=transform_test, img_column=img_column)
         test_dataset = FaceDataset(test_data, root_dir, transform=transform_test, img_column=img_column)
 
-        # Create data loaders
         if ddp:
             train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=True)
             val_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset, shuffle=False)
@@ -293,12 +264,10 @@ class Dataset_selector(Dataset):
                 pin_memory=pin_memory,
             )
 
-        # Debug: Print loader sizes
         print(f"Train loader batches: {len(self.loader_train)}")
         print(f"Validation loader batches: {len(self.loader_val)}")
         print(f"Test loader batches: {len(self.loader_test)}")
 
-        # Test a sample batch
         for loader, name in [(self.loader_train, 'train'), (self.loader_val, 'validation'), (self.loader_test, 'test')]:
             try:
                 sample = next(iter(loader))
@@ -313,20 +282,18 @@ class Trainer:
         self.dataset_dir = args.dataset_dir
         self.num_workers = args.num_workers
         self.pin_memory = args.pin_memory
-        self.arch = args.arch  # Expected to be 'ResNet_50'
+        self.arch = args.arch
         self.device = args.device
         self.test_batch_size = args.test_batch_size
         self.sparsed_student_ckpt_path = args.sparsed_student_ckpt_path
-        self.dataset_mode = args.dataset_mode  # 'hardfake', 'rvf10k', '140k', '200k'
+        self.dataset_mode = args.dataset_mode
 
-        # Verify CUDA availability
         if self.device == 'cuda' and not torch.cuda.is_available():
             raise RuntimeError("CUDA is not available! Please check GPU setup.")
 
     def dataload(self):
         print("==> Loading test dataset..")
         try:
-            # Verify dataset paths
             if self.dataset_mode == 'hardfake':
                 csv_path = os.path.join(self.dataset_dir, 'data.csv')
                 if not os.path.exists(csv_path):
@@ -345,7 +312,6 @@ class Trainer:
                 if not os.path.exists(test_csv):
                     raise FileNotFoundError(f"CSV file not found: {test_csv}")
 
-            # Initialize dataset based on mode
             if self.dataset_mode == 'hardfake':
                 dataset = Dataset_selector(
                     dataset_mode='hardfake',
@@ -388,7 +354,7 @@ class Trainer:
                     realfake200k_train_csv=os.path.join(self.dataset_dir, 'train_labels.csv'),
                     realfake200k_valid_csv=os.path.join(self.dataset_dir, 'val_labels.csv'),
                     realfake200k_test_csv=os.path.join(self.dataset_dir, 'test_labels.csv'),
-                    realfake200k_root_dir='/kaggle/input/realfake200k/real_vs_fake/real-vs-fake/',  # Updated
+                    realfake200k_root_dir=self.dataset_dir,
                     train_batch_size=self.test_batch_size,
                     eval_batch_size=self.test_batch_size,
                     num_workers=self.num_workers,
@@ -415,7 +381,6 @@ class Trainer:
             elif self.dataset_mode == '200k':
                 self.student = ResNet_50_sparse_hardfakevsreal()
 
-            # Load checkpoint
             if not os.path.exists(self.sparsed_student_ckpt_path):
                 raise FileNotFoundError(f"Checkpoint file not found: {self.sparsed_student_ckpt_path}")
             ckpt_student = torch.load(self.sparsed_student_ckpt_path, map_location="cpu", weights_only=True)
@@ -438,7 +403,7 @@ class Trainer:
         meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
 
         self.student.eval()
-        self.student.ticket = True  # Enable ticket mode for sparse model
+        self.student.ticket = True 
         try:
             with torch.no_grad():
                 with tqdm(total=len(self.test_loader), ncols=100, desc="Test") as _tqdm:
@@ -460,7 +425,6 @@ class Trainer:
 
             print(f"[Test] Dataset: {self.dataset_mode}, Prec@1: {meter_top1.avg:.2f}%")
 
-            # Calculate FLOPs and parameters
             (
                 Flops_baseline,
                 Flops,
@@ -499,27 +463,32 @@ class Trainer:
             raise
 
 def main():
-    # Clear CUDA cache to mitigate factory registration errors
     torch.cuda.empty_cache()
 
-    # Define arguments (simulate command-line args)
     class Args:
-        dataset_dir = "/kaggle/working/KDFS-Pearson-2/"  # Directory containing CSV files
-        num_workers = 4  # Reduced for stability
+        dataset_dir = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/my_real_vs_ai_dataset/my_real_vs_ai_dataset/"
+        num_workers = 4
         pin_memory = True
         arch = "ResNet_50"
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        test_batch_size = 16  # Reduced for stability
-        sparsed_student_ckpt_path = "/path/to/your/checkpoint.pth"  # TODO: Update this
+        test_batch_size = 16
+        sparsed_student_ckpt_path = "/kaggle/input/kdfs-22-khordad-200k-data/results/run_resnet50_imagenet_prune1/student_model/ResNet_50_sparse_best.pt"
         dataset_mode = "200k"
 
     args = Args()
 
-    # Step 1: Preprocess CSV files to add 'path' column
-    print("Preprocessing CSV files...")
-    preprocess_csv_files()
+    os.makedirs("/kaggle/working/KDFS-Pearson-2/", exist_ok=True)
+    csv_files = [
+        "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/train_labels.csv",
+        "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/val_labels.csv",
+        "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/test_labels.csv"
+    ]
+    for csv_file in csv_files:
+        if os.path.exists(csv_file):
+            os.system(f"cp {csv_file} /kaggle/working/KDFS-Pearson-2/")
+        else:
+            print(f"Warning: CSV file not found: {csv_file}")
 
-    # Step 2: Initialize and run the Trainer
     trainer = Trainer(args)
     trainer.main()
 
