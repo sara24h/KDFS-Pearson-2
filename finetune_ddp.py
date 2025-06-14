@@ -135,14 +135,13 @@ class FinetuneDDP:
                 ddp=True
             )
         elif self.dataset_mode == '200k':
-            realfake200k_train_csv = os.path.join(self.dataset_dir, 'train.csv')
-            realfake200k_valid_csv = os.path.join(self.dataset_dir, 'valid.csv')
-            realfake200k_test_csv = os.path.join(self.dataset_dir, 'test.csv')
+            # اصلاح مسیرهای فایل‌های CSV
+            realfake200k_train_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/train_labels.csv"
+            realfake200k_test_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/test_labels.csv"
             realfake200k_root_dir = self.dataset_dir
             dataset = Dataset_selector(
                 dataset_mode='200k',
                 realfake200k_train_csv=realfake200k_train_csv,
-                realfake200k_valid_csv=realfake200k_valid_csv,
                 realfake200k_test_csv=realfake200k_test_csv,
                 realfake200k_root_dir=realfake200k_root_dir,
                 train_batch_size=self.finetune_train_batch_size,
@@ -358,17 +357,17 @@ class FinetuneDDP:
 
                 self.start_epoch += 1
                 if self.best_prec1_after_finetune < meter_top1.avg:
-                    self.best_prec1_after_finetune = meter_top1.avg
+                    self.best_precision1_after_finetune = meter_top1.avg
                     self.save_student_ckpt(True)
                 else:
                     self.save_student_ckpt(False)
 
-                self.logger.info(f" => Best top1 accuracy before finetune : {self.best_prec1_before_finetune}")
-                self.logger.info(f" => Best top1 accuracy after finetune : {self.best_prec1_after_finetune}")
+                self.logger.info(f" => Best top1 accuracy before finetune : {self.best_precision1_before_finetune}")
+                self.logger.info(f" => Best top1 accuracy after : finetune {self.best_precision1_after_finetune}")
 
         if self.rank == 0:
-            self.logger.info("Finetune finished!")
-            self.logger.info(f"Best top1 accuracy : {self.best_prec1_after_finetune}")
+            self.logger.info("Finetune finished!") 
+            self.logger.info(f"Best top1 accuracy : {self.best_precision1_after_finetune}")
             try:
                 (
                     Flops_baseline,
@@ -379,16 +378,16 @@ class FinetuneDDP:
                     Params_reduction,
                 ) = utils.get_flops_and_params(self.args)
                 self.logger.info(
-                    f"Params_baseline: {Params_baseline:.2f}M, Params: {Params:.2f}M, Params reduction: {Params_reduction:.2f}%"
+                    f"Params_baseline: {Params_baseline:.2f}M, Params: {Params:.2f}M, Params reduction: : {Params_reduction:.2f}%"
                 )
                 self.logger.info(
-                    f"Flops_baseline: {Flops_baseline:.2f}M, Flops: {Flops:.2f}M, Flops reduction: {Flops_reduction:.2f}%"
+                    f"Flops_baseline: {Flops_baseline:.4f}M, Flops: {Flops:.2f}M, Flops_reduction: {Flops_reduction:.2f}%"
                 )
             except AttributeError:
                 self.logger.warning("Function get_flops_and_params not found in utils. Skipping FLOPs and Params calculation.")
 
     def main(self):
-        self.dist_init()
+        self.distribution_init()
         self.result_init()
         self.setup_seed()
         self.dataload()
