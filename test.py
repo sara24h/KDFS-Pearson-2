@@ -13,26 +13,30 @@ from get_flops_and_params import get_flops_and_params  # Assumed to exist
 from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal  # Adjust as needed
 
 class FaceDataset(Dataset):
-    def __init__(self, data_frame, root_dir, transform=None, img_column='path'):
+    def __init__(self, data_frame, root_dir, transform=None, split='train'):
         self.data = data_frame
         self.root_dir = root_dir
         self.transform = transform
-        self.img_column = img_column
+        self.split = split  # train, valid, or test
         self.label_map = {1: 1, 0: 0, 'real': 1, 'fake': 0, 'Real': 1, 'Fake': 0}
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
-        img_name = os.path.join(self.root_dir, self.data[self.img_column].iloc[idx])
+        # Build image path using filename and label
+        folder = 'real' if self.data['label'].iloc[idx] in [1, 'real', 'Real'] else 'fake'
+        img_name = os.path.join(self.root_dir, self.split, folder, self.data['filename'].iloc[idx])
+        
         if not os.path.exists(img_name):
             print(f"Warning: Image not found: {img_name}")
-            image_size = 256 if any(mode in self.root_dir for mode in ['140k', '200k']) else 300
+            image_size = 256  # Based on dataset mode 200k
             image = Image.new('RGB', (image_size, image_size), color='black')
             label = self.label_map[self.data['label'].iloc[idx]]
             if self.transform:
                 image = self.transform(image)
             return image, torch.tensor(label, dtype=torch.float)
+        
         image = Image.open(img_name).convert('RGB')
         label = self.label_map[self.data['label'].iloc[idx]]
         if self.transform:
@@ -99,8 +103,6 @@ class Dataset_selector(Dataset):
             transforms.Normalize(mean=mean, std=std),
         ])
 
-        img_column = 'path'
-
         if dataset_mode == 'hardfake':
             if not hardfake_csv_file or not hardfake_root_dir:
                 raise ValueError("hardfake_csv_file and hardfake_root_dir must be provided")
@@ -159,9 +161,6 @@ class Dataset_selector(Dataset):
             test_data = pd.read_csv(realfake140k_test_csv)
             root_dir = os.path.join(realfake140k_root_dir, 'real_vs_fake', 'real-vs-fake')
 
-            if 'path' not in train_data.columns:
-                raise ValueError("CSV files for 140k dataset must contain a 'path' column")
-
             train_data = train_data.sample(frac=1, random_state=3407).reset_index(drop=True)
             val_data = val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
             test_data = test_data.sample(frac=1, random_state=3407).reset_index(drop=True)
@@ -174,48 +173,40 @@ class Dataset_selector(Dataset):
             test_data = pd.read_csv(realfake200k_test_csv)
             root_dir = realfake200k_root_dir
 
-            def create_image_path(row, split):
-                folder = 'real' if row['label'] in [1, 'real', 'Real'] else 'fake'
-                return os.path.join(root_dir, split, folder, row['filename'])
-
-            train_data['path'] = train_data.apply(lambda row: create_image_path(row, 'train'), axis=1)
-            val_data['path'] = val_data.apply(lambda row: create_image_path(row, 'valid'), axis=1)
-            test_data['path'] = test_data.apply(lambda row: create_image_path(row, 'test'), axis=1)
-
-            output_dir = "/kaggle/working/KDFS-Pearson-2/"
-            os.makedirs(output_dir, exist_ok=True)
-            train_data.to_csv(os.path.join(output_dir, 'train_labels.csv'), index=False)
-            val_data.to_csv(os.path.join(output_dir, 'val_labels.csv'), index=False)
-            test_data.to_csv(os.path.join(output_dir, 'test_labels.csv'), index=False)
+            # Debug: Print column names to verify
+            print("Columns in train_data:", train_data.columns.tolist())
+            print("Columns in val_data:", val_data.columns.tolist())
+            print("Columns in test_data:", test_data.columns.tolist())
 
             train_data = train_data.sample(frac=1, random_state=3407).reset_index(drop=True)
             val_data = val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
             test_data = test_data.sample(frac=1, random_state=3407).reset_index(drop=True)
 
         print(f"{dataset_mode} dataset statistics:")
-        print(f"Sample train image paths:\n{train_data[img_column].head()}")
+        print(f"Sample train filenames:\n{train_data['filename'].head()}")
         print(f"Total train dataset size: {len(train_data)}")
         print(f"Train label distribution:\n{train_data['label'].value_counts()}")
-        print(f"Sample validation image paths:\n{val_data[img_column].head()}")
+        print(f"Sample validation filenames:\n{val_data['filename'].head()}")
         print(f"Total validation dataset size: {len(val_data)}")
         print(f"Validation label distribution:\n{val_data['label'].value_counts()}")
-        print(f"Sample test image paths:\n{test_data[img_column].head()}")
+        print(f"Sample test filenames:\n{test_data['filename'].head()}")
         print(f"Total test dataset size: {len(test_data)}")
         print(f"Test label distribution:\n{test_data['label'].value_counts()}")
 
         for split, data in [('train', train_data), ('validation', val_data), ('test', test_data)]:
             missing_images = []
-            for img_path in data[img_column]:
-                full_path = os.path.join(root_dir, img_path)
-                if not os.path.exists(full_path):
-                    missing_images.append(full_path)
+            for idx in range(len(data)):
+                folder = 'real' if data['label'].iloc[idx] in [1, 'real', 'Real'] else 'fake'
+                img_path = os.path.join(root_dir, split, folder, data['filename'].iloc[idx])
+                if not os.path.exists(img_path):
+                    missing_images.append(img_path)
             if missing_images:
                 print(f"Missing {split} images: {len(missing_images)}")
                 print(f"Sample missing {split} images:", missing_images[:5])
 
-        train_dataset = FaceDataset(train_data, root_dir, transform=transform_train, img_column=img_column)
-        val_dataset = FaceDataset(val_data, root_dir, transform=transform_test, img_column=img_column)
-        test_dataset = FaceDataset(test_data, root_dir, transform=transform_test, img_column=img_column)
+        train_dataset = FaceDataset(train_data, root_dir, transform=transform_train, split='train')
+        val_dataset = FaceDataset(val_data, root_dir, transform=transform_test, split='valid')
+        test_dataset = FaceDataset(test_data, root_dir, transform=transform_test, split='test')
 
         if ddp:
             train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=True)
@@ -296,66 +287,12 @@ class Trainer:
     def dataload(self):
         print("==> Loading test dataset..")
         try:
-            if self.dataset_mode == 'hardfake':
-                csv_path = os.path.join(self.dataset_dir, 'data.csv')
-                if not os.path.exists(csv_path):
-                    raise FileNotFoundError(f"CSV file not found: {csv_path}")
-            elif self.dataset_mode == 'rvf10k':
-                train_csv = os.path.join(self.dataset_dir, 'train.csv')
-                valid_csv = os.path.join(self.dataset_dir, 'valid.csv')
-                if not os.path.exists(train_csv) or not os.path.exists(valid_csv):
-                    raise FileNotFoundError(f"CSV files not found: {train_csv}, {valid_csv}")
-            elif self.dataset_mode == '140k':
-                test_csv = os.path.join(self.dataset_dir, 'test.csv')
-                if not os.path.exists(test_csv):
-                    raise FileNotFoundError(f"CSV file not found: {test_csv}")
-            elif self.dataset_mode == '200k':
-                test_csv = os.path.join("/kaggle/working/KDFS-Pearson-2/", 'test_labels.csv')
-                if not os.path.exists(test_csv):
-                    raise FileNotFoundError(f"CSV file not found: {test_csv}")
-
-            if self.dataset_mode == 'hardfake':
-                dataset = Dataset_selector(
-                    dataset_mode='hardfake',
-                    hardfake_csv_file=os.path.join(self.dataset_dir, 'data.csv'),
-                    hardfake_root_dir=self.dataset_dir,
-                    train_batch_size=self.test_batch_size,
-                    eval_batch_size=self.test_batch_size,
-                    num_workers=self.num_workers,
-                    pin_memory=self.pin_memory,
-                    ddp=False
-                )
-            elif self.dataset_mode == 'rvf10k':
-                dataset = Dataset_selector(
-                    dataset_mode='rvf10k',
-                    rvf10k_train_csv=os.path.join(self.dataset_dir, 'train.csv'),
-                    rvf10k_valid_csv=os.path.join(self.dataset_dir, 'valid.csv'),
-                    rvf10k_root_dir=self.dataset_dir,
-                    train_batch_size=self.test_batch_size,
-                    eval_batch_size=self.test_batch_size,
-                    num_workers=self.num_workers,
-                    pin_memory=self.pin_memory,
-                    ddp=False
-                )
-            elif self.dataset_mode == '140k':
-                dataset = Dataset_selector(
-                    dataset_mode='140k',
-                    realfake140k_train_csv=os.path.join(self.dataset_dir, 'train.csv'),
-                    realfake140k_valid_csv=os.path.join(self.dataset_dir, 'valid.csv'),
-                    realfake140k_test_csv=os.path.join(self.dataset_dir, 'test.csv'),
-                    realfake140k_root_dir=self.dataset_dir,
-                    train_batch_size=self.test_batch_size,
-                    eval_batch_size=self.test_batch_size,
-                    num_workers=self.num_workers,
-                    pin_memory=self.pin_memory,
-                    ddp=False
-                )
-            elif self.dataset_mode == '200k':
+            if self.dataset_mode == '200k':
                 dataset = Dataset_selector(
                     dataset_mode='200k',
-                    realfake200k_train_csv=os.path.join("/kaggle/working/KDFS-Pearson-2/", 'train_labels.csv'),
-                    realfake200k_valid_csv=os.path.join("/kaggle/working/KDFS-Pearson-2/", 'val_labels.csv'),
-                    realfake200k_test_csv=os.path.join("/kaggle/working/KDFS-Pearson-2/", 'test_labels.csv'),
+                    realfake200k_train_csv=os.path.join("/kaggle/input/200k-real-vs-ai-vs-ai-visuals", 'train_labels.csv'),
+                    realfake200k_valid_csv=os.path.join("/kaggle/input/200k-real-vs-ai-vs-ai-visuals", 'val_labels.csv'),
+                    realfake200k_test_csv=os.path.join("/kaggle/input/200k-real-vs-ai-vs-ai-visuals", 'test_images.csv'),
                     realfake200k_root_dir=self.dataset_dir,
                     train_batch_size=self.test_batch_size,
                     eval_batch_size=self.test_batch_size,
@@ -363,6 +300,8 @@ class Trainer:
                     pin_memory=self.pin_memory,
                     ddp=False
                 )
+            else:
+                raise ValueError(f"Unsupported dataset_mode: {self.dataset_mode}")
 
             self.test_loader = dataset.loader_test
             print(f"{self.dataset_mode} test dataset loaded! Total batches: {len(self.test_loader)}")
@@ -374,14 +313,7 @@ class Trainer:
         print("==> Building student model..")
         try:
             print(f"Loading sparse student model for dataset mode: {self.dataset_mode}")
-            if self.dataset_mode == 'hardfake':
-                self.student = ResNet_50_sparse_hardfakevsreal()
-            elif self.dataset_mode == 'rvf10k':
-                self.student = ResNet_50_sparse_hardfakevsreal()
-            elif self.dataset_mode == '140k':
-                self.student = ResNet_50_sparse_hardfakevsreal()
-            elif self.dataset_mode == '200k':
-                self.student = ResNet_50_sparse_hardfakevsreal()
+            self.student = ResNet_50_sparse_hardfakevsreal()
 
             if not os.path.exists(self.sparsed_student_ckpt_path):
                 raise FileNotFoundError(f"Checkpoint file not found: {self.sparsed_student_ckpt_path}")
@@ -466,39 +398,21 @@ class Trainer:
 
 def main():
     # Set environment variable to mitigate CUDA errors
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
     os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
     torch.cuda.empty_cache()
 
     class Args:
-        dataset_dir = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/my_real_vs_ai_dataset/my_real_vs_ai_dataset/"
+        dataset_dir = "/kaggle/input/200k-real-vs-ai-vs-ai-visuals/my_real_vs_ai/images/"
         num_workers = 4
         pin_memory = True
         arch = "ResNet_50"
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        test_batch_size = 16
-        sparsed_student_ckpt_path = "/kaggle/input/kdfs-22-khordad-200k-data/results/run_resnet50_imagenet_prune1/student_model/ResNet_50_sparse_best.pt"
+        test_batch_size = 32
+        sparsed_student_ckpt_path = "/kaggle/input/kdfs-22-khordad-200k-data/results/run_resnet50_imagenet_prune1/images/student_model/ResNet_50_sparse_best.pt"
         dataset_mode = "200k"
 
     args = Args()
-
-    os.makedirs("/kaggle/working/KDFS-Pearson-2/", exist_ok=True)
-    input_csv_files = [
-        "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/train_labels.csv",
-        "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/val_labels.csv",
-        "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/test_labels.csv"
-    ]
-    output_csv_files = [
-        "/kaggle/working/KDFS-Pearson-2/train_labels.csv",
-        "/kaggle/working/KDFS-Pearson-2/val_labels.csv",
-        "/kaggle/working/KDFS-Pearson-2/test_labels.csv"
-    ]
-
-    for input_csv, output_csv in zip(input_csv_files, output_csv_files):
-        if os.path.exists(input_csv):
-            os.system(f"cp {input_csv} {output_csv}")
-            print(f"Successfully copied {input_csv} to {output_csv}")
-        else:
-            print(f"Warning: CSV file not found: {input_csv}")
 
     trainer = Trainer(args)
     trainer.main()
