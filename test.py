@@ -27,7 +27,6 @@ class FaceDataset(Dataset):
         return len(self.data)
 
     def __getitem__(self, idx):
-        # Build image path using filename and label
         folder = 'real' if self.data['label'].iloc[idx] in [1, 'real', 'Real'] else 'fake'
         img_name = os.path.join(self.root_dir, self.split, folder, self.data['filename'].iloc[idx])
         
@@ -46,10 +45,10 @@ class FaceDataset(Dataset):
             image = self.transform(image)
         return image, torch.tensor(label, dtype=torch.float)
 
-class Dataset_selector(Dataset):
+class Dataset_selector:
     def __init__(
         self,
-        dataset_mode,  # 'hardfake', 'rvf10k', '140k', '200k'
+        dataset_mode,
         hardfake_csv_file=None,
         hardfake_root_dir=None,
         rvf10k_train_csv=None,
@@ -65,7 +64,7 @@ class Dataset_selector(Dataset):
         realfake200k_root_dir=None,
         train_batch_size=32,
         eval_batch_size=32,
-        num_workers=4,  # Optimized based on system recommendation
+        num_workers=4,
         pin_memory=True,
         ddp=False,
     ):
@@ -73,21 +72,13 @@ class Dataset_selector(Dataset):
             raise ValueError("dataset_mode must be 'hardfake', 'rvf10k', '140k', or '200k'")
 
         self.dataset_mode = dataset_mode
-
         image_size = (256, 256) if dataset_mode in ['rvf10k', '140k', '200k'] else (300, 300)
 
-        if dataset_mode == 'hardfake':
-            mean = (0.5124, 0.4165, 0.3684)
-            std = (0.2363, 0.2087, 0.2029)
-        elif dataset_mode == 'rvf10k':
-            mean = (0.5212, 0.4260, 0.3811)
-            std = (0.2486, 0.2238, 0.2211)
-        elif dataset_mode == '140k':
+        if dataset_mode == '200k':
             mean = (0.5207, 0.4258, 0.3806)
             std = (0.2490, 0.2239, 0.2212)
-        else:  # dataset_mode == '200k'
-            mean = (0.5207, 0.4258, 0.3806)
-            std = (0.2490, 0.2239, 0.2212)
+        else:
+            raise ValueError(f"Unsupported dataset_mode: {dataset_mode} for this implementation")
 
         transform_train = transforms.Compose([
             transforms.Resize(image_size),
@@ -109,12 +100,15 @@ class Dataset_selector(Dataset):
         if dataset_mode == '200k':
             if not realfake200k_train_csv or not realfake200k_valid_csv or not realfake200k_test_csv or not realfake200k_root_dir:
                 raise ValueError("realfake200k_train_csv, realfake200k_valid_csv, realfake200k_test_csv, and realfake200k_root_dir must be provided")
+            # Verify CSV file paths
+            for csv_file in [realfake200k_train_csv, realfake200k_valid_csv, realfake200k_test_csv]:
+                if not os.path.exists(csv_file):
+                    raise FileNotFoundError(f"CSV file not found: {csv_file}")
             train_data = pd.read_csv(realfake200k_train_csv)
             val_data = pd.read_csv(realfake200k_valid_csv)
             test_data = pd.read_csv(realfake200k_test_csv)
             root_dir = realfake200k_root_dir
 
-            # Debug: Print column names to verify
             print("Columns in train_data:", train_data.columns.tolist())
             print("Columns in val_data:", val_data.columns.tolist())
             print("Columns in test_data:", test_data.columns.tolist())
@@ -122,9 +116,6 @@ class Dataset_selector(Dataset):
             train_data = train_data.sample(frac=1, random_state=3407).reset_index(drop=True)
             val_data = val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
             test_data = test_data.sample(frac=1, random_state=3407).reset_index(drop=True)
-
-        else:
-            raise ValueError(f"Unsupported dataset_mode: {dataset_mode} for this implementation")
 
         print(f"{dataset_mode} dataset statistics:")
         print(f"Sample train filenames:\n{train_data['filename'].head()}")
@@ -137,7 +128,6 @@ class Dataset_selector(Dataset):
         print(f"Total test dataset size: {len(test_data)}")
         print(f"Test label distribution:\n{test_data['label'].value_counts()}")
 
-        # Verify image paths
         for split, data in [('train', train_data), ('validation', val_data), ('test', test_data)]:
             missing_images = []
             for idx in range(len(data)):
@@ -157,7 +147,6 @@ class Dataset_selector(Dataset):
             train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=True)
             val_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset, shuffle=False)
             test_sampler = torch.utils.data.distributed.DistributedSampler(test_dataset, shuffle=False)
-            
             self.loader_train = DataLoader(
                 train_dataset, 
                 batch_size=train_batch_size, 
@@ -206,7 +195,6 @@ class Dataset_selector(Dataset):
         print(f"Validation loader batches: {len(self.loader_val)}")
         print(f"Test loader batches: {len(self.loader_test)}")
 
-        # Debug: Verify DataLoader samples
         for loader, name in [(self.loader_train, 'train'), (self.loader_val, 'validation'), (self.loader_test, 'test')]:
             try:
                 sample = next(iter(loader))
@@ -236,9 +224,9 @@ class Trainer:
             if self.dataset_mode == '200k':
                 dataset = Dataset_selector(
                     dataset_mode='200k',
-                    realfake200k_train_csv=os.path.join(self.dataset_dir, 'train_labels.csv'),
-                    realfake200k_valid_csv=os.path.join(self.dataset_dir, 'val_labels.csv'),
-                    realfake200k_test_csv=os.path.join(self.dataset_dir, 'test_labels.csv'),
+                    realfake200k_train_csv=os.path.join(self.args.csv_dir, 'train_labels.csv'),
+                    realfake200k_valid_csv=os.path.join(self.args.csv_dir, 'val_labels.csv'),
+                    realfake200k_test_csv=os.path.join(self.args.csv_dir, 'test_labels.csv'),
                     realfake200k_root_dir=self.dataset_dir,
                     train_batch_size=self.test_batch_size,
                     eval_batch_size=self.test_batch_size,
@@ -328,16 +316,15 @@ class Trainer:
             raise
 
 def main():
-    # Set environment variables to mitigate CUDA errors
     os.environ["CUDA_VISIBLE_DEVICES"] = "0"
     os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
     torch.cuda.empty_cache()
     torch.cuda.set_device(0)
 
     class Args:
-        # Adjusted dataset_dir to match log
         dataset_dir = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/my_real_vs_ai_dataset/my_real_vs_ai_dataset"
-        num_workers = min(4, multiprocessing.cpu_count())  # Optimized workers
+        csv_dir = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal"  # CSV files are directly under this path
+        num_workers = min(4, multiprocessing.cpu_count())
         pin_memory = True
         arch = "ResNet_50"
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -347,7 +334,6 @@ def main():
 
     args = Args()
 
-    # Debug: Verify paths
     print("Dataset dir exists:", os.path.exists(args.dataset_dir))
     if os.path.exists(args.dataset_dir):
         print("Dataset dir contents:", os.listdir(args.dataset_dir))
@@ -355,6 +341,9 @@ def main():
             split_path = os.path.join(args.dataset_dir, split)
             if os.path.exists(split_path):
                 print(f"{split} folder contents:", os.listdir(split_path)[:5])
+    print("CSV dir exists:", os.path.exists(args.csv_dir))
+    if os.path.exists(args.csv_dir):
+        print("CSV dir contents:", os.listdir(args.csv_dir))
     print("Checkpoint exists:", os.path.exists(args.sparsed_student_ckpt_path))
 
     trainer = Trainer(args)
