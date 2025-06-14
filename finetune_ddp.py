@@ -211,7 +211,7 @@ class FinetuneDDP:
     def resume_student_ckpt(self):
         ckpt_student = torch.load(self.finetune_resume, map_location="cpu", weights_only=True)
         self.best_prec1_after_finetune = ckpt_student["best_prec1_after_finetune"]
-        self.start_epoch = ckpt Vakpt_student["start_epoch"]
+        self.start_epoch = ckpt_student["start_epoch"]
         self.student.module.load_state_dict(ckpt_student["student"])
         self.finetune_optim_weight.load_state_dict(
             ckpt_student["finetune_optim_weight"]
