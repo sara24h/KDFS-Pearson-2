@@ -312,7 +312,7 @@ class Trainer:  # تغییر نام کلاس از Test به Trainer
                 if not os.path.exists(test_csv):
                     raise FileNotFoundError(f"CSV file not found: {test_csv}")
             elif self.dataset_mode == '200k':
-                test_csv = os.path.join(self.dataset_dir, 'test.csv')
+                test_csv = os.path.join(self.dataset_dir, 'test_labels.csv')
                 if not os.path.exists(test_csv):
                     raise FileNotFoundError(f"CSV file not found: {test_csv}")
 
