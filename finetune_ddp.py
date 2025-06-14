@@ -15,6 +15,7 @@ from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_
 
 class FinetuneDDP:
     def __init__(self, args):
+        """Initialize FinetuneDDP with provided arguments."""
         self.args = args
         self.dataset_dir = args.dataset_dir
         self.dataset_mode = args.dataset_mode
@@ -53,6 +54,7 @@ class FinetuneDDP:
         self.rank = -1
 
     def dist_init(self):
+        """Initialize distributed training with NCCL backend."""
         dist.init_process_group("nccl")
         self.world_size = dist.get_world_size()
         self.rank = dist.get_rank()
@@ -60,6 +62,7 @@ class FinetuneDDP:
         torch.cuda.set_device(self.local_rank)
 
     def result_init(self):
+        """Initialize logging and TensorBoard writer for rank 0."""
         if self.rank == 0:
             self.writer = SummaryWriter(self.result_dir)
             self.logger = utils.get_logger(
@@ -73,6 +76,7 @@ class FinetuneDDP:
             self.logger.info("--------- Finetune -----------")
 
     def setup_seed(self):
+        """Set random seeds for reproducibility."""
         os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
         os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
         torch.use_deterministic_algorithms(True)
@@ -89,6 +93,7 @@ class FinetuneDDP:
             torch.backends.cudnn.enabled = True
 
     def dataload(self):
+        """Load dataset based on dataset_mode."""
         if self.dataset_mode == 'hardfake':
             hardfake_csv_file = os.path.join(self.dataset_dir, 'data.csv')
             hardfake_root_dir = self.dataset_dir
@@ -135,15 +140,15 @@ class FinetuneDDP:
                 ddp=True
             )
         elif self.dataset_mode == '200k':
-            # Fixed CSV file paths
+            # Use correct argument names as defined in Dataset_selector
             realfake200k_train_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/train_labels.csv"
-            realfake200k_valid_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/val_labels.csv"
+            realfake200k_val_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/val_labels.csv"
             realfake200k_test_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/test_labels.csv"
             realfake200k_root_dir = self.dataset_dir
             dataset = Dataset_selector(
                 dataset_mode='200k',
                 realfake200k_train_csv=realfake200k_train_csv,
-                realfake200k_valid_csv=realfake200k_valid_csv,
+                realfake200k_val_csv=realfake200k_val_csv,
                 realfake200k_test_csv=realfake200k_test_csv,
                 realfake200k_root_dir=realfake200k_root_dir,
                 train_batch_size=self.finetune_train_batch_size,
@@ -162,6 +167,7 @@ class FinetuneDDP:
             self.logger.info("Dataset loaded successfully!")
 
     def build_model(self):
+        """Build and load the student model."""
         if self.rank == 0:
             self.logger.info("==> Building model...")
             self.logger.info("Loading student model")
@@ -183,9 +189,11 @@ class FinetuneDDP:
         self.student = DDP(self.student, device_ids=[self.local_rank], find_unused_parameters=True)
 
     def define_loss(self):
+        """Define the loss function."""
         self.ori_loss = nn.BCEWithLogitsLoss()
 
     def define_optim(self):
+        """Define optimizer and scheduler."""
         weight_params = map(
             lambda a: a[1],
             filter(
@@ -209,6 +217,7 @@ class FinetuneDDP:
         )
 
     def resume_student_ckpt(self):
+        """Resume training from a checkpoint."""
         ckpt_student = torch.load(self.finetune_resume, map_location="cpu", weights_only=True)
         self.best_prec1_after_finetune = ckpt_student["best_prec1_after_finetune"]
         self.start_epoch = ckpt_student["start_epoch"]
@@ -223,6 +232,7 @@ class FinetuneDDP:
             self.logger.info(f"=> Resuming from epoch {self.start_epoch}...")
 
     def save_student_ckpt(self, is_best):
+        """Save model checkpoint."""
         if self.rank == 0:
             folder = os.path.join(self.result_dir, "student_model")
             if not os.path.exists(folder):
@@ -247,12 +257,14 @@ class FinetuneDDP:
             )
 
     def reduce_tensor(self, tensor):
+        """Reduce tensor across all processes in DDP."""
         rt = tensor.clone()
         dist.all_reduce(rt, op=dist.ReduceOp.SUM)
         rt /= self.world_size
         return rt
 
     def finetune(self):
+        """Perform finetuning of the student model."""
         self.ori_loss = self.ori_loss.cuda()
         if self.finetune_resume:
             self.resume_student_ckpt()
@@ -389,6 +401,7 @@ class FinetuneDDP:
                 self.logger.warning("Function get_flops_and_params not found in utils. Skipping FLOPs and parameters calculation.")
 
     def main(self):
+        """Main function to orchestrate finetuning process."""
         self.dist_init()
         self.result_init()
         self.setup_seed()
