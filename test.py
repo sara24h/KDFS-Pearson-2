@@ -292,7 +292,7 @@ class Trainer:
                     dataset_mode='200k',
                     realfake200k_train_csv=os.path.join("/kaggle/input/200k-real-vs-ai-visuals-by-mbilal", 'train_labels.csv'),
                     realfake200k_valid_csv=os.path.join("/kaggle/input/200k-real-vs-ai-visuals-by-mbilal", 'val_labels.csv'),
-                    realfake200k_test_csv=os.path.join("/kaggle/input/200k-real-vs-ai-visuals-by-mbilal", 'test_images.csv'),
+                    realfake200k_test_csv=os.path.join("/kaggle/input/200k-real-vs-ai-visuals-by-mbilal", 'test_labels.csv'),
                     realfake200k_root_dir=self.dataset_dir,
                     train_batch_size=self.test_batch_size,
                     eval_batch_size=self.test_batch_size,
