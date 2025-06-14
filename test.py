@@ -8,9 +8,38 @@ from PIL import Image
 from sklearn.model_selection import train_test_split
 import torchvision.transforms as transforms
 from torch.utils.data import Dataset, DataLoader
-from utils import meter
-from get_flops_and_params import get_flops_and_params
-from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k, ResNet_50_sparse_140k, ResNet_50_sparse_200k
+from utils import meter  # Assuming this exists
+from get_flops_and_params import get_flops_and_params  # Assuming this exists
+from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal  # Adjust as needed
+
+# Step 1: Preprocess CSV files to add 'path' column
+def preprocess_csv_files():
+    # Define the root directory where images are stored
+    image_root_dir = "/kaggle/input/realfake200k/real_vs_fake/real-vs-fake/"
+
+    # List of CSV files and their corresponding splits
+    csv_files = [
+        ("/kaggle/working/KDFS-Pearson-2/train_labels.csv", "train"),
+        ("/kaggle/working/KDFS-Pearson-2/val_labels.csv", "valid"),
+        ("/kaggle/working/KDFS-Pearson-2/test_labels.csv", "test")
+    ]
+
+    for csv_file, split in csv_files:
+        if not os.path.exists(csv_file):
+            print(f"Warning: CSV file not found: {csv_file}")
+            continue
+        # Load the CSV file
+        df = pd.read_csv(csv_file)
+        
+        # Create the 'path' column by combining the root directory, split, and filename
+        df['path'] = df['filename'].apply(lambda x: os.path.join(image_root_dir, split, x))
+        
+        # Save the modified CSV
+        df.to_csv(csv_file, index=False)
+        print(f"Updated {csv_file} with 'path' column")
+        
+        # Verify the first few paths
+        print(f"Sample paths from {csv_file}:\n{df['path'].head()}")
 
 class FaceDataset(Dataset):
     def __init__(self, data_frame, root_dir, transform=None, img_column='images_id'):
@@ -177,7 +206,7 @@ class Dataset_selector(Dataset):
             train_data = pd.read_csv(realfake200k_train_csv)
             val_data = pd.read_csv(realfake200k_valid_csv)
             test_data = pd.read_csv(realfake200k_test_csv)
-            root_dir = realfake200k_root_dir 
+            root_dir = realfake200k_root_dir
 
             if 'path' not in train_data.columns:
                 raise ValueError("CSV files for 200k dataset must contain a 'path' column")
@@ -278,7 +307,7 @@ class Dataset_selector(Dataset):
             except Exception as e:
                 print(f"Error loading sample {name} batch: {e}")
 
-class Trainer:  # تغییر نام کلاس از Test به Trainer
+class Trainer:
     def __init__(self, args):
         self.args = args
         self.dataset_dir = args.dataset_dir
@@ -359,7 +388,7 @@ class Trainer:  # تغییر نام کلاس از Test به Trainer
                     realfake200k_train_csv=os.path.join(self.dataset_dir, 'train_labels.csv'),
                     realfake200k_valid_csv=os.path.join(self.dataset_dir, 'val_labels.csv'),
                     realfake200k_test_csv=os.path.join(self.dataset_dir, 'test_labels.csv'),
-                    realfake200k_root_dir=self.dataset_dir,
+                    realfake200k_root_dir='/kaggle/input/realfake200k/real_vs_fake/real-vs-fake/',  # Updated
                     train_batch_size=self.test_batch_size,
                     eval_batch_size=self.test_batch_size,
                     num_workers=self.num_workers,
@@ -468,3 +497,31 @@ class Trainer:  # تغییر نام کلاس از Test به Trainer
         except Exception as e:
             print(f"Error in test pipeline: {str(e)}")
             raise
+
+def main():
+    # Clear CUDA cache to mitigate factory registration errors
+    torch.cuda.empty_cache()
+
+    # Define arguments (simulate command-line args)
+    class Args:
+        dataset_dir = "/kaggle/working/KDFS-Pearson-2/"  # Directory containing CSV files
+        num_workers = 4  # Reduced for stability
+        pin_memory = True
+        arch = "ResNet_50"
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        test_batch_size = 16  # Reduced for stability
+        sparsed_student_ckpt_path = "/path/to/your/checkpoint.pth"  # TODO: Update this
+        dataset_mode = "200k"
+
+    args = Args()
+
+    # Step 1: Preprocess CSV files to add 'path' column
+    print("Preprocessing CSV files...")
+    preprocess_csv_files()
+
+    # Step 2: Initialize and run the Trainer
+    trainer = Trainer(args)
+    trainer.main()
+
+if __name__ == "__main__":
+    main()
