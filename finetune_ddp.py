@@ -65,7 +65,7 @@ class FinetuneDDP:
             self.logger = utils.get_logger(
                 os.path.join(self.result_dir, "finetune_logger.log"), "finetune_logger"
             )
-            self.logger.info("finetune config:")
+            self.logger.info("Finetune configuration:")
             self.logger.info(str(json.dumps(vars(self.args), indent=4)))
             utils.record_config(
                 self.args, os.path.join(self.result_dir, "finetune_config.txt")
@@ -135,13 +135,15 @@ class FinetuneDDP:
                 ddp=True
             )
         elif self.dataset_mode == '200k':
-            # اصلاح مسیرهای فایل‌های CSV
+            # Fixed CSV file paths
             realfake200k_train_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/train_labels.csv"
+            realfake200k_valid_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/val_labels.csv"
             realfake200k_test_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/test_labels.csv"
             realfake200k_root_dir = self.dataset_dir
             dataset = Dataset_selector(
                 dataset_mode='200k',
                 realfake200k_train_csv=realfake200k_train_csv,
+                realfake200k_valid_csv=realfake200k_valid_csv,
                 realfake200k_test_csv=realfake200k_test_csv,
                 realfake200k_root_dir=realfake200k_root_dir,
                 train_batch_size=self.finetune_train_batch_size,
@@ -157,11 +159,11 @@ class FinetuneDDP:
         self.val_loader = dataset.loader_val
         self.test_loader = dataset.loader_test
         if self.rank == 0:
-            self.logger.info("Dataset has been loaded!")
+            self.logger.info("Dataset loaded successfully!")
 
     def build_model(self):
         if self.rank == 0:
-            self.logger.info("==> Building model..")
+            self.logger.info("==> Building model...")
             self.logger.info("Loading student model")
         if not os.path.exists(self.finetune_student_ckpt_path):
             raise FileNotFoundError(f"Checkpoint file not found: {self.finetune_student_ckpt_path}")
@@ -209,16 +211,16 @@ class FinetuneDDP:
     def resume_student_ckpt(self):
         ckpt_student = torch.load(self.finetune_resume, map_location="cpu", weights_only=True)
         self.best_prec1_after_finetune = ckpt_student["best_prec1_after_finetune"]
-        self.start_epoch = ckpt_student["start_epoch"]
+        self.start_epoch = ckpt Vakpt_student["start_epoch"]
         self.student.module.load_state_dict(ckpt_student["student"])
         self.finetune_optim_weight.load_state_dict(
             ckpt_student["finetune_optim_weight"]
         )
         self.finetune_scheduler_student_weight.load_state_dict(
-            ckpt_student["finetune_scheduler_student_weight"] 
+            ckpt_student["finetune_scheduler_student_weight"]
         )
         if self.rank == 0:
-            self.logger.info(f"=> Continue from epoch {self.start_epoch}...")
+            self.logger.info(f"=> Resuming from epoch {self.start_epoch}...")
 
     def save_student_ckpt(self, is_best):
         if self.rank == 0:
@@ -276,7 +278,7 @@ class FinetuneDDP:
 
             with tqdm(total=len(self.train_loader), ncols=100) as _tqdm:
                 if self.rank == 0:
-                    _tqdm.set_description(f"epoch: {epoch}/{self.finetune_num_epochs}")
+                    _tqdm.set_description(f"Epoch: {epoch}/{self.finetune_num_epochs}")
                 for images, targets in self.train_loader:
                     self.finetune_optim_weight.zero_grad()
                     images = images.cuda()
@@ -319,11 +321,11 @@ class FinetuneDDP:
                 self.writer.add_scalar("finetune_train/lr/lr", finetune_lr, epoch)
 
                 self.logger.info(
-                    f"[Finetune_train] Epoch {epoch} : "
-                    f"LR {finetune_lr:.6f} "
-                    f"OriLoss {meter_oriloss.avg:.4f} "
-                    f"TotalLoss {meter_loss.avg:.4f} "
-                    f"Prec@1 {meter_top1.avg:.2f}"
+                    f"[Finetune_train] Epoch {epoch}: "
+                    f"Learning rate {finetune_lr:.6f} "
+                    f"Original loss {meter_oriloss.avg:.4f} "
+                    f"Total loss {meter_loss.avg:.4f} "
+                    f"Accuracy@1 {meter_top1.avg:.2f}"
                 )
 
             if self.rank == 0:
@@ -332,7 +334,7 @@ class FinetuneDDP:
                 meter_top1.reset()
                 with torch.no_grad():
                     with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
-                        _tqdm.set_description(f"epoch: {epoch}/{self.finetune_num_epochs}")
+                        _tqdm.set_description(f"Epoch: {epoch}/{self.finetune_num_epochs}")
                         for images, targets in self.val_loader:
                             images = images.cuda()
                             targets = targets.cuda().float()
@@ -349,25 +351,25 @@ class FinetuneDDP:
 
                 self.writer.add_scalar("finetune_val/acc/top1", meter_top1.avg, epoch)
                 self.logger.info(
-                    f"[Finetune_val] Epoch {epoch} : Prec@1 {meter_top1.avg:.2f}"
+                    f"[Finetune_val] Epoch {epoch}: Accuracy@1 {meter_top1.avg:.2f}"
                 )
 
                 masks = [round(m.mask.mean().item(), 2) for m in self.student.module.mask_modules]
-                self.logger.info(f"[Mask avg] Epoch {epoch} : {masks}")
+                self.logger.info(f"[Average mask] Epoch {epoch}: {masks}")
 
                 self.start_epoch += 1
                 if self.best_prec1_after_finetune < meter_top1.avg:
-                    self.best_precision1_after_finetune = meter_top1.avg
+                    self.best_prec1_after_finetune = meter_top1.avg
                     self.save_student_ckpt(True)
                 else:
                     self.save_student_ckpt(False)
 
-                self.logger.info(f" => Best top1 accuracy before finetune : {self.best_precision1_before_finetune}")
-                self.logger.info(f" => Best top1 accuracy after : finetune {self.best_precision1_after_finetune}")
+                self.logger.info(f" => Best Accuracy@1 before finetune: {self.best_prec1_before_finetune}")
+                self.logger.info(f" => Best Accuracy@1 after finetune: {self.best_prec1_after_finetune}")
 
         if self.rank == 0:
-            self.logger.info("Finetune finished!") 
-            self.logger.info(f"Best top1 accuracy : {self.best_precision1_after_finetune}")
+            self.logger.info("Finetuning completed!")
+            self.logger.info(f"Best Accuracy@1: {self.best_prec1_after_finetune}")
             try:
                 (
                     Flops_baseline,
@@ -378,16 +380,16 @@ class FinetuneDDP:
                     Params_reduction,
                 ) = utils.get_flops_and_params(self.args)
                 self.logger.info(
-                    f"Params_baseline: {Params_baseline:.2f}M, Params: {Params:.2f}M, Params reduction: : {Params_reduction:.2f}%"
+                    f"Baseline parameters: {Params_baseline:.2f}M, Parameters: {Params:.2f}M, Parameter reduction: {Params_reduction:.2f}%"
                 )
                 self.logger.info(
-                    f"Flops_baseline: {Flops_baseline:.4f}M, Flops: {Flops:.2f}M, Flops_reduction: {Flops_reduction:.2f}%"
+                    f"Baseline FLOPs: {Flops_baseline:.2f}M, FLOPs: {Flops:.2f}M, FLOPs reduction: {Flops_reduction:.2f}%"
                 )
             except AttributeError:
-                self.logger.warning("Function get_flops_and_params not found in utils. Skipping FLOPs and Params calculation.")
+                self.logger.warning("Function get_flops_and_params not found in utils. Skipping FLOPs and parameters calculation.")
 
     def main(self):
-        self.distribution_init()
+        self.dist_init()
         self.result_init()
         self.setup_seed()
         self.dataload()
