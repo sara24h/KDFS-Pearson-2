@@ -5,6 +5,7 @@ import os
 import pandas as pd
 from PIL import Image
 from sklearn.model_selection import train_test_split
+from torch.utils.data.distributed import DistributedSampler
 
 class FaceDataset(Dataset):
     def __init__(self, data_frame, root_dir, transform=None, img_column='filename'):
@@ -12,16 +13,19 @@ class FaceDataset(Dataset):
         self.root_dir = root_dir
         self.transform = transform
 
-        possible_columns = ['filename', 'image', 'path']
+        # Check for appropriate column for image paths
+        possible_columns = ['filename', 'image', 'path', 'original_path', 'images_id']
         for col in possible_columns:
             if col in self.data.columns:
                 self.img_column = col
                 break
         else:
-            raise ValueError(f"No image column found. Expected one of {possible_columns}")
+            raise ValueError(f"No image column found. Expected columns: {possible_columns}")
 
+        # Label mapping
         self.label_map = {1: 1, 0: 0, 'real': 1, 'fake': 0, 'Real': 1, 'Fake': 0, 'ai': 0}
 
+        # Check for existence of image files
         missing_images = []
         for img_path in self.data[self.img_column]:
             full_path = os.path.join(self.root_dir, img_path)
@@ -39,12 +43,12 @@ class FaceDataset(Dataset):
         if not os.path.exists(img_name):
             raise FileNotFoundError(f"Image not found: {img_name}")
         image = Image.open(img_name).convert('RGB')
-        label = self.label_map[self.data['label'].iloc[idx]]
+        label = self.label_map.get(self.data['label'].iloc[idx], self.data['label'].iloc[idx])
         if self.transform:
             image = self.transform(image)
         return image, torch.tensor(label, dtype=torch.float)
 
-class Dataset_selector(Dataset):
+class Dataset_selector:
     def __init__(
         self,
         dataset_mode,
@@ -68,12 +72,14 @@ class Dataset_selector(Dataset):
         ddp=False,
     ):
         if dataset_mode not in ['hardfake', 'rvf10k', '140k', '200k']:
-            raise ValueError("dataset_mode must be 'hardfake', 'rvf10k', '140k', or '200k'")
+            raise ValueError("dataset_mode must be one of 'hardfake', 'rvf10k', '140k', or '200k'")
 
         self.dataset_mode = dataset_mode
 
+        # Set image size
         image_size = (256, 256) if dataset_mode in ['rvf10k', '140k', '200k'] else (300, 300)
 
+        # Set mean and standard deviation for normalization
         if dataset_mode == 'hardfake':
             mean = (0.5124, 0.4165, 0.3684)
             std = (0.2363, 0.2087, 0.2029)
@@ -87,6 +93,7 @@ class Dataset_selector(Dataset):
             mean = (0.4868, 0.3972, 0.3624)
             std = (0.2296, 0.2066, 0.2009)
 
+        # Define data transformations
         transform_train = transforms.Compose([
             transforms.Resize(image_size),
             transforms.RandomHorizontalFlip(p=0.5),
@@ -104,7 +111,8 @@ class Dataset_selector(Dataset):
             transforms.Normalize(mean=mean, std=std),
         ])
 
-        img_column = 'filename' if dataset_mode in ['140k', '200k'] else 'images_id'
+        # Select appropriate column for image paths
+        img_column = 'path' if dataset_mode == '140k' else 'filename' if dataset_mode == '200k' else 'images_id'
 
         # Load data based on dataset_mode
         if dataset_mode == 'hardfake':
@@ -165,8 +173,9 @@ class Dataset_selector(Dataset):
             test_data = pd.read_csv(realfake140k_test_csv)
             root_dir = os.path.join(realfake140k_root_dir, 'real_vs_fake', 'real-vs-fake')
 
-            if 'filename' not in train_data.columns and 'image' not in train_data.columns and 'path' not in train_data.columns:
-                raise ValueError("CSV files for 140k dataset must contain a 'filename', 'image', or 'path' column")
+            # Check for existence of path column
+            if 'path' not in train_data.columns:
+                raise ValueError("CSV files for 140k dataset must contain a 'path' column")
 
             train_data = train_data.sample(frac=1, random_state=3407).reset_index(drop=True)
             val_data = val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
@@ -180,7 +189,6 @@ class Dataset_selector(Dataset):
             test_data = pd.read_csv(realfake200k_test_csv)
             root_dir = realfake200k_root_dir
 
-            # Adjust image paths to match the current dataset structure (ai_images and real)
             def create_image_path(row):
                 folder = 'real' if row['label'] == 1 else 'ai_images'
                 img_name = row.get('filename', row.get('image', row.get('path', '')))
@@ -194,6 +202,7 @@ class Dataset_selector(Dataset):
             val_data = val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
             test_data = test_data.sample(frac=1, random_state=3407).reset_index(drop=True)
 
+        # Print dataset statistics
         print(f"{dataset_mode} dataset statistics:")
         print(f"Sample train image paths:\n{train_data[img_column].head()}")
         print(f"Total train dataset size: {len(train_data)}")
@@ -210,10 +219,11 @@ class Dataset_selector(Dataset):
         val_dataset = FaceDataset(val_data, root_dir, transform=transform_test, img_column=img_column)
         test_dataset = FaceDataset(test_data, root_dir, transform=transform_test, img_column=img_column)
 
+        # Set up DataLoader
         if ddp:
-            train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=True)
-            val_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset, shuffle=False)
-            test_sampler = torch.utils.data.distributed.DistributedSampler(test_dataset, shuffle=False)
+            train_sampler = DistributedSampler(train_dataset, shuffle=True)
+            val_sampler = DistributedSampler(val_dataset, shuffle=False)
+            test_sampler = DistributedSampler(test_dataset, shuffle=False)
 
             self.loader_train = DataLoader(
                 train_dataset,
@@ -232,8 +242,8 @@ class Dataset_selector(Dataset):
             self.loader_test = DataLoader(
                 test_dataset,
                 batch_size=eval_batch_size,
-                num_workers=1,
-                pin_memory=True,
+                num_workers=num_workers,
+                pin_memory=pin_memory,
                 sampler=test_sampler,
             )
         else:
@@ -256,13 +266,14 @@ class Dataset_selector(Dataset):
                 batch_size=eval_batch_size,
                 shuffle=False,
                 num_workers=num_workers,
-                pin_memory=pin_memory
+                pin_memory=pin_memory,
             )
 
-        print(f"Train loader batches: {len(self.loader_train)}")
-        print(f"Validation loader batches: {len(self.loader_val)}")
-        print(f"Test loader batches: {len(self.loader_test)}")
+        print(f"Number of train batches: {len(self.loader_train)}")
+        print(f"Number of validation batches: {len(self.loader_val)}")
+        print(f"Number of test batches: {len(self.loader_test)}")
 
+        # Check sample batches
         for loader, name in [(self.loader_train, 'train'), (self.loader_val, 'validation'), (self.loader_test, 'test')]:
             try:
                 sample = next(iter(loader))
