@@ -356,9 +356,9 @@ class Trainer:  # تغییر نام کلاس از Test به Trainer
             elif self.dataset_mode == '200k':
                 dataset = Dataset_selector(
                     dataset_mode='200k',
-                    realfake200k_train_csv=os.path.join(self.dataset_dir, 'train.csv'),
-                    realfake200k_valid_csv=os.path.join(self.dataset_dir, 'valid.csv'),
-                    realfake200k_test_csv=os.path.join(self.dataset_dir, 'test.csv'),
+                    realfake200k_train_csv=os.path.join(self.dataset_dir, 'train_labels.csv'),
+                    realfake200k_valid_csv=os.path.join(self.dataset_dir, 'val_labels.csv'),
+                    realfake200k_test_csv=os.path.join(self.dataset_dir, 'test_labels.csv'),
                     realfake200k_root_dir=self.dataset_dir,
                     train_batch_size=self.test_batch_size,
                     eval_batch_size=self.test_batch_size,
@@ -380,11 +380,11 @@ class Trainer:  # تغییر نام کلاس از Test به Trainer
             if self.dataset_mode == 'hardfake':
                 self.student = ResNet_50_sparse_hardfakevsreal()
             elif self.dataset_mode == 'rvf10k':
-                self.student = ResNet_50_sparse_rvf10k()
+                self.student = ResNet_50_sparse_hardfakevsreal()
             elif self.dataset_mode == '140k':
-                self.student = ResNet_50_sparse_140k()
+                self.student = ResNet_50_sparse_hardfakevsreal()
             elif self.dataset_mode == '200k':
-                self.student = ResNet_50_sparse_200k()
+                self.student = ResNet_50_sparse_hardfakevsreal()
 
             # Load checkpoint
             if not os.path.exists(self.sparsed_student_ckpt_path):
