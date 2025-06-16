@@ -6,6 +6,7 @@ import pandas as pd
 from PIL import Image
 from sklearn.model_selection import train_test_split
 from torch.utils.data.distributed import DistributedSampler
+import glob
 
 class FaceDataset(Dataset):
     def __init__(self, data_frame, root_dir, transform=None, img_column='filename'):
@@ -65,19 +66,20 @@ class Dataset_selector:
         realfake200k_val_csv=None,
         realfake200k_test_csv=None,
         realfake200k_root_dir=None,
+        realfake190k_root_dir=None,
         train_batch_size=32,
         eval_batch_size=32,
         num_workers=8,
         pin_memory=True,
         ddp=False,
     ):
-        if dataset_mode not in ['hardfake', 'rvf10k', '140k', '200k']:
-            raise ValueError("dataset_mode must be one of 'hardfake', 'rvf10k', '140k', or '200k'")
+        if dataset_mode not in ['hardfake', 'rvf10k', '140k', '200k', '190k']:
+            raise ValueError("dataset_mode must be one of 'hardfake', 'rvf10k', '140k', '200k', or '190k'")
 
         self.dataset_mode = dataset_mode
 
         # Set image size
-        image_size = (256, 256) if dataset_mode in ['rvf10k', '140k', '200k'] else (300, 300)
+        image_size = (256, 256) if dataset_mode in ['rvf10k', '140k', '200k', '190k'] else (300, 300)
 
         # Set mean and standard deviation for normalization
         if dataset_mode == 'hardfake':
@@ -89,9 +91,12 @@ class Dataset_selector:
         elif dataset_mode == '140k':
             mean = (0.5207, 0.4258, 0.3806)
             std = (0.2490, 0.2239, 0.2212)
-        else:  # 200k
+         elif dataset_mode == '200k':
             mean = (0.4868, 0.3972, 0.3624)
             std = (0.2296, 0.2066, 0.2009)
+        elif dataset_mode == '190k':
+            mean = (0.4668, 0.3816, 0.3414)
+            std = (0.2410, 0.2161, 0.2081)
 
         # Define data transformations
         transform_train = transforms.Compose([
@@ -112,7 +117,7 @@ class Dataset_selector:
         ])
 
         # Select appropriate column for image paths
-        img_column = 'path' if dataset_mode == '140k' else 'filename' if dataset_mode == '200k' else 'images_id'
+        img_column = 'path' if dataset_mode == '140k' else 'filename' if dataset_mode in ['200k', '190k'] else 'images_id'
 
         # Load data based on dataset_mode
         if dataset_mode == 'hardfake':
@@ -181,7 +186,7 @@ class Dataset_selector:
             val_data = val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
             test_data = test_data.sample(frac=1, random_state=3407).reset_index(drop=True)
 
-        else:  # dataset_mode == '200k'
+        elif dataset_mode == '200k':
             if not realfake200k_train_csv or not realfake200k_val_csv or not realfake200k_test_csv or not realfake200k_root_dir:
                 raise ValueError("realfake200k_train_csv, realfake200k_val_csv, realfake200k_test_csv, and realfake200k_root_dir must be provided")
             train_data = pd.read_csv(realfake200k_train_csv)
@@ -197,6 +202,37 @@ class Dataset_selector:
             train_data['filename'] = train_data.apply(create_image_path, axis=1)
             val_data['filename'] = val_data.apply(create_image_path, axis=1)
             test_data['filename'] = test_data.apply(create_image_path, axis=1)
+
+            train_data = train_data.sample(frac=1, random_state=3407).reset_index(drop=True)
+            val_data = val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
+            test_data = test_data.sample(frac=1, random_state=3407).reset_index(drop=True)
+
+        elif dataset_mode == '190k':
+            if not realfake190k_root_dir:
+                raise ValueError("realfake190k_root_dir must be provided")
+            root_dir = realfake190k_root_dir
+
+            def create_dataframe(split):
+                data = {'filename': [], 'label': []}
+                real_path = os.path.join(root_dir, split, 'Real')
+                fake_path = os.path.join(root_dir, split, 'Fake')
+                
+                for img_path in glob.glob(os.path.join(real_path, 'real_*.jpg')):
+                    data['filename'].append(os.path.relpath(img_path, root_dir))
+                    data['label'].append(1)  # Real = 1
+                
+                for img_path in glob.glob(os.path.join(fake_path, 'fake_*.jpg')):
+                    data['filename'].append(os.path.relpath(img_path, root_dir))
+                    data['label'].append(0)  # Fake = 0
+                
+                df = pd.DataFrame(data)
+                if df.empty:
+                    raise ValueError(f"No images found in {split} directory")
+                return df
+
+            train_data = create_dataframe('Train')
+            val_data = create_dataframe('Validation')
+            test_data = create_dataframe('Test')
 
             train_data = train_data.sample(frac=1, random_state=3407).reset_index(drop=True)
             val_data = val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
@@ -319,6 +355,14 @@ if __name__ == "__main__":
         realfake200k_val_csv='/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/val_labels.csv',
         realfake200k_test_csv='/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/test_labels.csv',
         realfake200k_root_dir='/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/my_real_vs_ai_dataset',
+        train_batch_size=128,
+        eval_batch_size=128,
+        ddp=True,
+    )
+
+    dataset_190k = Dataset_selector(
+        dataset_mode='190k',
+        realfake190k_root_dir='/kaggle/input/deepfake-and-real-images',
         train_batch_size=128,
         eval_batch_size=128,
         ddp=True,
