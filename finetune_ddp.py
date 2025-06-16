@@ -11,7 +11,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from utils import utils, loss, meter, scheduler
 from data.dataset import Dataset_selector
-from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k, ResNet_50_sparse_140k, ResNet_50_sparse_200k
+from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k, ResNet_50_sparse_140k, ResNet_50_sparse_200k, ResNet_50_sparse_190k
 
 class FinetuneDDP:
     def __init__(self, args):
@@ -27,6 +27,8 @@ class FinetuneDDP:
             self.dataset_type = "140k"
         elif self.dataset_mode == "200k":
             self.dataset_type = "200k"
+        elif self.dataset_mode == "190k":
+            self.dataset_type = "190k"
         else:
             raise ValueError(f"Unknown dataset_mode: {self.dataset_mode}")
         self.num_workers = args.num_workers
@@ -140,7 +142,6 @@ class FinetuneDDP:
                 ddp=True
             )
         elif self.dataset_mode == '200k':
-            # Use correct argument names as defined in Dataset_selector
             realfake200k_train_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/train_labels.csv"
             realfake200k_val_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/val_labels.csv"
             realfake200k_test_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/test_labels.csv"
@@ -151,6 +152,17 @@ class FinetuneDDP:
                 realfake200k_val_csv=realfake200k_val_csv,
                 realfake200k_test_csv=realfake200k_test_csv,
                 realfake200k_root_dir=realfake200k_root_dir,
+                train_batch_size=self.finetune_train_batch_size,
+                eval_batch_size=self.finetune_eval_batch_size,
+                num_workers=self.num_workers,
+                pin_memory=self.pin_memory,
+                ddp=True
+            )
+        elif self.dataset_mode == '190k':
+            realfake190k_root_dir = self.args.realfake190k_root_dir
+            dataset = Dataset_selector(
+                dataset_mode='190k',
+                realfake190k_root_dir=realfake190k_root_dir,
                 train_batch_size=self.finetune_train_batch_size,
                 eval_batch_size=self.finetune_eval_batch_size,
                 num_workers=self.num_workers,
@@ -181,6 +193,10 @@ class FinetuneDDP:
             self.student = ResNet_50_sparse_140k()
         elif self.dataset_mode == "200k":
             self.student = ResNet_50_sparse_200k()
+        elif self.dataset_mode == "190k":
+            self.student = ResNet_50_sparse_190k()
+        else:
+            raise ValueError(f"Unknown dataset_mode: {self.dataset_mode}")
         ckpt_student = torch.load(self.finetune_student_ckpt_path, map_location="cpu", weights_only=True)
         self.student.load_state_dict(ckpt_student["student"])
         if self.rank == 0:
