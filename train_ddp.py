@@ -357,12 +357,8 @@ class TrainDDP:
             ckpt_student["student"] = self.student.module.state_dict()
             ckpt_student["optim_weight"] = self.optim_weight.state_dict()
             ckpt_student["optim_mask"] = self.optim_mask.state_dict()
-            ckpt_student[
-                "scheduler_student_weight"
-            ] = self.scheduler_student_weight state_dict()
-            ckpt_student[
-                "scheduler_student_mask"
-            ] = self.scheduler_student_mask.state_dict()
+            ckpt_student["scheduler_student_weight"] = self.scheduler_student_weight.state_dict()
+            ckpt_student["scheduler_student_mask"] = self.scheduler_student_mask.state_dict()
 
             if is_best:
                 torch.save(
