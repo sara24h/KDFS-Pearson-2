@@ -26,6 +26,7 @@ Flops_baselines = {
         "rvf10k": 5000,
         "140k": 5390.0,
         "200k": 5390.0,
+        "190k": 5390.0,  # Added FLOPs for 190k dataset, assuming similar to 140k/200k
     }
 }
 
@@ -64,6 +65,7 @@ class TrainDDP:
         self.local_rank = -1
         self.rank = -1
 
+        # Updated to include 190k dataset
         if self.dataset_mode == "hardfake":
             self.args.dataset_type = "hardfakevsrealfaces"
             self.num_classes = 1
@@ -80,8 +82,12 @@ class TrainDDP:
             self.args.dataset_type = "200k"
             self.num_classes = 1
             self.image_size = 256
+        elif self.dataset_mode == "190k":  # Added 190k dataset configuration
+            self.args.dataset_type = "190k"
+            self.num_classes = 1
+            self.image_size = 256
         else:
-            raise ValueError("dataset_mode must be 'hardfake', 'rvf10k', '140k', or '200k'")
+            raise ValueError("dataset_mode must be 'hardfake', 'rvf10k', '140k', '200k', or '190k'")
 
     def dist_init(self):
         dist.init_process_group("nccl")
@@ -121,65 +127,50 @@ class TrainDDP:
             torch.backends.cudnn.enabled = True
 
     def dataload(self):
-        if self.dataset_mode not in ['hardfake', 'rvf10k', '140k', '200k']:
-            raise ValueError("dataset_mode must be 'hardfake', 'rvf10k', '140k', or '200k'")
+        if self.dataset_mode not in ['hardfake', 'rvf10k', '140k', '200k', '190k']:
+            raise ValueError("dataset_mode must be 'hardfake', 'rvf10k', '140k', '200k', or '190k'")
+
+        # Initialize all dataset paths to None
+        hardfake_csv_file = None
+        hardfake_root_dir = None
+        rvf10k_train_csv = None
+        rvf10k_valid_csv = None
+        rvf10k_root_dir = None
+        realfake140k_train_csv = None
+        realfake140k_valid_csv = None
+        realfake140k_test_csv = None
+        realfake140k_root_dir = None
+        realfake200k_train_csv = None
+        realfake200k_val_csv = None
+        realfake200k_test_csv = None
+        realfake200k_root_dir = None
+        realfake190k_train_csv = None  # Added for 190k
+        realfake190k_val_csv = None
+        realfake190k_test_csv = None
+        realfake190k_root_dir = None
 
         if self.dataset_mode == 'hardfake':
             hardfake_csv_file = os.path.join(self.dataset_dir, 'data.csv')
             hardfake_root_dir = self.dataset_dir
-            rvf10k_train_csv = None
-            rvf10k_valid_csv = None
-            rvf10k_root_dir = None
-            realfake140k_train_csv = None
-            realfake140k_valid_csv = None
-            realfake140k_test_csv = None
-            realfake140k_root_dir = None
-            realfake200k_train_csv = None
-            realfake200k_val_csv = None
-            realfake200k_test_csv = None
-            realfake200k_root_dir = None
         elif self.dataset_mode == 'rvf10k':
-            hardfake_csv_file = None
-            hardfake_root_dir = None
             rvf10k_train_csv = os.path.join(self.dataset_dir, 'train.csv')
             rvf10k_valid_csv = os.path.join(self.dataset_dir, 'valid.csv')
             rvf10k_root_dir = self.dataset_dir
-            realfake140k_train_csv = None
-            realfake140k_valid_csv = None
-            realfake140k_test_csv = None
-            realfake140k_root_dir = None
-            realfake200k_train_csv = None
-            realfake200k_val_csv = None
-            realfake200k_test_csv = None
-            realfake200k_root_dir = None
         elif self.dataset_mode == '140k':
-            hardfake_csv_file = None
-            hardfake_root_dir = None
-            rvf10k_train_csv = None
-            rvf10k_valid_csv = None
-            rvf10k_root_dir = None
             realfake140k_train_csv = os.path.join(self.dataset_dir, 'train.csv')
             realfake140k_valid_csv = os.path.join(self.dataset_dir, 'valid.csv')
             realfake140k_test_csv = os.path.join(self.dataset_dir, 'test.csv')
             realfake140k_root_dir = self.dataset_dir
-            realfake200k_train_csv = None
-            realfake200k_val_csv = None
-            realfake200k_test_csv = None
-            realfake200k_root_dir = None
         elif self.dataset_mode == '200k':
-            hardfake_csv_file = None
-            hardfake_root_dir = None
-            rvf10k_train_csv = None
-            rvf10k_valid_csv = None
-            rvf10k_root_dir = None
-            realfake140k_train_csv = None
-            realfake140k_valid_csv = None
-            realfake140k_test_csv = None
-            realfake140k_root_dir = None
             realfake200k_train_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/train_labels.csv"
             realfake200k_val_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/val_labels.csv"
             realfake200k_test_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/test_labels.csv"
             realfake200k_root_dir = self.dataset_dir
+        elif self.dataset_mode == '190k':  # Added 190k dataset paths
+            realfake190k_train_csv = os.path.join(self.dataset_dir, 'train.csv')
+            realfake190k_val_csv = os.path.join(self.dataset_dir, 'valid.csv')
+            realfake190k_test_csv = os.path.join(self.dataset_dir, 'test.csv')
+            realfake190k_root_dir = self.dataset_dir
 
         if self.rank == 0:
             self.logger.info(f"Loading dataset: {self.dataset_mode}")
@@ -204,6 +195,13 @@ class TrainDDP:
                     raise FileNotFoundError(f"Valid CSV file not found: {realfake200k_val_csv}")
                 if not os.path.exists(realfake200k_test_csv):
                     raise FileNotFoundError(f"Test CSV file not found: {realfake200k_test_csv}")
+            elif self.dataset_mode == '190k':  # Added checks for 190k dataset
+                if not os.path.exists(realfake190k_train_csv):
+                    raise FileNotFoundError(f"Train CSV file not found: {realfake190k_train_csv}")
+                if not os.path.exists(realfake190k_val_csv):
+                    raise FileNotFoundError(f"Valid CSV file not found: {realfake190k_val_csv}")
+                if not os.path.exists(realfake190k_test_csv):
+                    raise FileNotFoundError(f"Test CSV file not found: {realfake190k_test_csv}")
 
         dataset_instance = Dataset_selector(
             dataset_mode=self.dataset_mode,
@@ -220,6 +218,10 @@ class TrainDDP:
             realfake200k_val_csv=realfake200k_val_csv,
             realfake200k_test_csv=realfake200k_test_csv,
             realfake200k_root_dir=realfake200k_root_dir,
+            realfake190k_train_csv=realfake190k_train_csv,  # Added 190k dataset parameters
+            realfake190k_val_csv=realfake190k_val_csv,
+            realfake190k_test_csv=realfake190k_test_csv,
+            realfake190k_root_dir=realfake190k_root_dir,
             train_batch_size=self.train_batch_size,
             eval_batch_size=self.eval_batch_size,
             num_workers=self.num_workers,
@@ -240,7 +242,7 @@ class TrainDDP:
 
         resnet = ResNet_50_hardfakevsreal()
         ckpt_teacher = torch.load(self.teacher_ckpt_path, map_location="cpu", weights_only=True)
-        state_dict = ckpt_teacher.get('model_state_dict', ckpt_teacher)
+        state_dict = ckpt_teacher.get('config_state_dict', ckpt_teacher)
         resnet.load_state_dict(state_dict, strict=True)
         self.teacher = resnet.cuda()
 
@@ -269,7 +271,7 @@ class TrainDDP:
                 gumbel_end_temperature=self.gumbel_end_temperature,
                 num_epochs=self.num_epochs,
             )
-        else:  # rvf10k, 140k, or 200k
+        else:  # rvf10k, 140k, 200k, or 190k
             self.student = ResNet_50_sparse_rvf10k(
                 gumbel_start_temperature=self.gumbel_start_temperature,
                 gumbel_end_temperature=self.gumbel_end_temperature,
@@ -357,7 +359,7 @@ class TrainDDP:
             ckpt_student["optim_mask"] = self.optim_mask.state_dict()
             ckpt_student[
                 "scheduler_student_weight"
-            ] = self.scheduler_student_weight.state_dict()
+            ] = self.scheduler_student_weight state_dict()
             ckpt_student[
                 "scheduler_student_mask"
             ] = self.scheduler_student_mask.state_dict()
@@ -480,7 +482,7 @@ class TrainDDP:
                             + self.coef_maskloss * mask_loss
                         )
 
-                    scaler.scale(total_loss).backward()
+ Eisenstein,  scaler.scale(total_loss).backward()
                     scaler.step(self.optim_weight)
                     scaler.step(self.optim_mask)
                     scaler.update()
