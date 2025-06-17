@@ -82,7 +82,7 @@ class TrainDDP:
             self.args.dataset_type = "200k"
             self.num_classes = 1
             self.image_size = 256
-        elif self.dataset_mode == "190k":  # Added 190k dataset configuration
+        elif self.dataset_mode == "190k":
             self.args.dataset_type = "190k"
             self.num_classes = 1
             self.image_size = 256
@@ -144,64 +144,53 @@ class TrainDDP:
         realfake200k_val_csv = None
         realfake200k_test_csv = None
         realfake200k_root_dir = None
-        realfake190k_train_csv = None  # Added for 190k
-        realfake190k_val_csv = None
-        realfake190k_test_csv = None
         realfake190k_root_dir = None
 
         if self.dataset_mode == 'hardfake':
             hardfake_csv_file = os.path.join(self.dataset_dir, 'data.csv')
             hardfake_root_dir = self.dataset_dir
+            if self.rank == 0 and not os.path.exists(hardfake_csv_file):
+                raise FileNotFoundError(f"CSV file not found: {hardfake_csv_file}")
         elif self.dataset_mode == 'rvf10k':
             rvf10k_train_csv = os.path.join(self.dataset_dir, 'train.csv')
             rvf10k_valid_csv = os.path.join(self.dataset_dir, 'valid.csv')
             rvf10k_root_dir = self.dataset_dir
+            if self.rank == 0:
+                if not os.path.exists(rvf10k_train_csv):
+                    raise FileNotFoundError(f"Train CSV file not found: {rvf10k_train_csv}")
+                if not os.path.exists(rvf10k_valid_csv):
+                    raise FileNotFoundError(f"Valid CSV file not found: {rvf10k_valid_csv}")
         elif self.dataset_mode == '140k':
             realfake140k_train_csv = os.path.join(self.dataset_dir, 'train.csv')
             realfake140k_valid_csv = os.path.join(self.dataset_dir, 'valid.csv')
             realfake140k_test_csv = os.path.join(self.dataset_dir, 'test.csv')
             realfake140k_root_dir = self.dataset_dir
-        elif self.dataset_mode == '200k':
-            realfake200k_train_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/train_labels.csv"
-            realfake200k_val_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/val_labels.csv"
-            realfake200k_test_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/test_labels.csv"
-            realfake200k_root_dir = self.dataset_dir
-        elif self.dataset_mode == '190k':  # Added 190k dataset paths
-            realfake190k_train_csv = os.path.join(self.dataset_dir, 'train.csv')
-            realfake190k_val_csv = os.path.join(self.dataset_dir, 'valid.csv')
-            realfake190k_test_csv = os.path.join(self.dataset_dir, 'test.csv')
-            realfake190k_root_dir = self.dataset_dir
-
-        if self.rank == 0:
-            self.logger.info(f"Loading dataset: {self.dataset_mode}")
-            if self.dataset_mode == 'hardfake' and not os.path.exists(hardfake_csv_file):
-                raise FileNotFoundError(f"CSV file not found: {hardfake_csv_file}")
-            elif self.dataset_mode == 'rvf10k':
-                if not os.path.exists(rvf10k_train_csv):
-                    raise FileNotFoundError(f"Train CSV file not found: {rvf10k_train_csv}")
-                if not os.path.exists(rvf10k_valid_csv):
-                    raise FileNotFoundError(f"Valid CSV file not found: {rvf10k_valid_csv}")
-            elif self.dataset_mode == '140k':
+            if self.rank == 0:
                 if not os.path.exists(realfake140k_train_csv):
                     raise FileNotFoundError(f"Train CSV file not found: {realfake140k_train_csv}")
                 if not os.path.exists(realfake140k_valid_csv):
                     raise FileNotFoundError(f"Valid CSV file not found: {realfake140k_valid_csv}")
                 if not os.path.exists(realfake140k_test_csv):
                     raise FileNotFoundError(f"Test CSV file not found: {realfake140k_test_csv}")
-            elif self.dataset_mode == '200k':
+        elif self.dataset_mode == '200k':
+            realfake200k_train_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/train_labels.csv"
+            realfake200k_val_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/val_labels.csv"
+            realfake200k_test_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/test_labels.csv"
+            realfake200k_root_dir = self.dataset_dir
+            if self.rank == 0:
                 if not os.path.exists(realfake200k_train_csv):
                     raise FileNotFoundError(f"Train CSV file not found: {realfake200k_train_csv}")
                 if not os.path.exists(realfake200k_val_csv):
                     raise FileNotFoundError(f"Valid CSV file not found: {realfake200k_val_csv}")
                 if not os.path.exists(realfake200k_test_csv):
                     raise FileNotFoundError(f"Test CSV file not found: {realfake200k_test_csv}")
-            elif self.dataset_mode == '190k':  # Added checks for 190k dataset
-                if not os.path.exists(realfake190k_train_csv):
-                    raise FileNotFoundError(f"Train CSV file not found: {realfake190k_train_csv}")
-                if not os.path.exists(realfake190k_val_csv):
-                    raise FileNotFoundError(f"Valid CSV file not found: {realfake190k_val_csv}")
-                if not os.path.exists(realfake190k_test_csv):
-                    raise FileNotFoundError(f"Test CSV file not found: {realfake190k_test_csv}")
+        elif self.dataset_mode == '190k':
+            realfake190k_root_dir = self.dataset_dir
+            if self.rank == 0 and not os.path.exists(realfake190k_root_dir):
+                raise FileNotFoundError(f"190k dataset directory not found: {realfake190k_root_dir}")
+
+        if self.rank == 0:
+            self.logger.info(f"Loading dataset: {self.dataset_mode}")
 
         dataset_instance = Dataset_selector(
             dataset_mode=self.dataset_mode,
@@ -218,9 +207,6 @@ class TrainDDP:
             realfake200k_val_csv=realfake200k_val_csv,
             realfake200k_test_csv=realfake200k_test_csv,
             realfake200k_root_dir=realfake200k_root_dir,
-            realfake190k_train_csv=realfake190k_train_csv,  # Added 190k dataset parameters
-            realfake190k_val_csv=realfake190k_val_csv,
-            realfake190k_test_csv=realfake190k_test_csv,
             realfake190k_root_dir=realfake190k_root_dir,
             train_batch_size=self.train_batch_size,
             eval_batch_size=self.eval_batch_size,
@@ -497,10 +483,10 @@ class TrainDDP:
 
                     if self.rank == 0:
                         n = images.size(0)
-                        meter_oriloss.update(reduced_kd_loss.item(), n)
-                        meter_kdloss.update(self.coef_kd_loss * reduced_kd_loss.item(), n)
-                        meter_rcloss.update(self.coef_rc_loss * reduced_rcloss.item() / len(feature_list_student), n)
-                        meter_maskloss.update(self.coef_mask_loss * reduced_maskloss.item(), n)
+                        meter_oriloss.update(reduced_ori_loss.item(), n)
+                        meter_kdloss.update(self.coef_kdloss * reduced_kd_loss.item(), n)
+                        meter_rcloss.update(self.coef_rcloss * reduced_rc_loss.item() / len(feature_list_student), n)
+                        meter_maskloss.update(self.coef_maskloss * reduced_mask_loss.item(), n)
                         meter_loss.update(reduced_total_loss.item(), n)
                         meter_top1.update(reduced_prec1.item(), n)
 
