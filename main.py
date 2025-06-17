@@ -110,7 +110,7 @@ def parse_args():
     parser.add_argument(
         "--realfake190k_root_dir",
         type=str,
-        default="/kaggle/input/190k-real-and-fake-faces",
+        default="/kaggle/input/deepfake-and-real-images/Dataset",
         help="The path to the 190k dataset directory (for 190k mode)",
     )
     parser.add_argument(
