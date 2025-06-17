@@ -469,7 +469,7 @@ class TrainDDP:
                             mask_loss = mask_loss / matched_layers
                         else:
                             if self.rank == 0:
-                                self.logger.warning("No layers matched for mask loss calculation.")
+                                self.logger.warning("No layers matched for mask loss calculation")
 
                         total_loss = (
                             ori_loss
@@ -478,7 +478,7 @@ class TrainDDP:
                             + self.coef_maskloss * mask_loss
                         )
 
- Eisenstein,  scaler.scale(total_loss).backward()
+                    scaler.scale(total_loss).backward()
                     scaler.step(self.optim_weight)
                     scaler.step(self.optim_mask)
                     scaler.update()
@@ -497,12 +497,10 @@ class TrainDDP:
 
                     if self.rank == 0:
                         n = images.size(0)
-                        meter_oriloss.update(reduced_ori_loss.item(), n)
-                        meter_kdloss.update(self.coef_kdloss * reduced_kd_loss.item(), n)
-                        meter_rcloss.update(
-                            self.coef_rcloss * reduced_rc_loss.item() / len(feature_list_student), n
-                        )
-                        meter_maskloss.update(self.coef_maskloss * reduced_mask_loss.item(), n)
+                        meter_oriloss.update(reduced_kd_loss.item(), n)
+                        meter_kdloss.update(self.coef_kd_loss * reduced_kd_loss.item(), n)
+                        meter_rcloss.update(self.coef_rc_loss * reduced_rcloss.item() / len(feature_list_student), n)
+                        meter_maskloss.update(self.coef_mask_loss * reduced_maskloss.item(), n)
                         meter_loss.update(reduced_total_loss.item(), n)
                         meter_top1.update(reduced_prec1.item(), n)
 
