@@ -12,7 +12,7 @@ import random
 import matplotlib.pyplot as plt
 from IPython.display import Image as IPImage, display
 from ptflops import get_model_complexity_info
-from dataset import Dataset_selector  
+from data.dataset import Dataset_selector  
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Transfer learning with ResNet50 for fake vs real face classification.')
