@@ -32,7 +32,11 @@ def parse_args():
     parser.add_argument('--epochs', type=int, default=15,
                         help='Number of training epochs')
     parser.add_argument('--lr', type=float, default=0.0001,
-                        help='Learning rate for the optimizer')
+                        help='Learning rate for the fully connected layer')
+    parser.add_argument('--layer4_lr', type=float, default=1e-5,
+                        help='Learning rate for layer4 parameters')
+    parser.add_argument('--weight_decay', type=float, default=1e-4,
+                        help='Weight decay for the optimizer')
     return parser.parse_args()
 
 args = parse_args()
@@ -49,6 +53,8 @@ img_width = 256 if dataset_mode in ['rvf10k', '140k', '190k', '200k'] else args.
 batch_size = args.batch_size
 epochs = args.epochs
 lr = args.lr
+layer4_lr = args.layer4_lr
+weight_decay = args.weight_decay
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 if not os.path.exists(data_dir):
@@ -100,7 +106,6 @@ elif dataset_mode == '140k':
         ddp=False
     )
 elif dataset_mode == '190k':
-    # Use ImageFolder for folder-based dataset
     train_dataset = datasets.ImageFolder(
         root=os.path.join(data_dir, 'Train'),
         transform=transform
@@ -169,9 +174,9 @@ for param in model.fc.parameters():
 
 criterion = nn.BCEWithLogitsLoss()
 optimizer = optim.Adam([
-    {'params': model.layer4.parameters(), 'lr': 1e-5},
+    {'params': model.layer4.parameters(), 'lr': layer4_lr},
     {'params': model.fc.parameters(), 'lr': lr}
-], weight_decay=1e-4)
+], weight_decay=weight_decay)
 
 scaler = torch.amp.GradScaler('cuda') if device.type == 'cuda' else None
 
@@ -269,7 +274,7 @@ else:
     transform_test = dataset.loader_test.dataset.transform
 
 if dataset_mode in ['140k', '190k', '200k']:
-    img_column = 'filename' if dataset_mode in ['190k', '200k'] else 'path'
+    img_column = 'filename-list' if dataset_mode in ['190k', '200k'] else 'path'
 else:
     img_column = 'images_id'
 
