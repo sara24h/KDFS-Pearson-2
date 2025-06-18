@@ -63,7 +63,15 @@ if not os.path.exists(teacher_dir):
     os.makedirs(teacher_dir)
 
 # Define transforms
-transform = transforms.Compose([
+transform_train = transforms.Compose([
+    transforms.Resize((img_height, img_width)),
+    transforms.RandomHorizontalFlip(),
+    transforms.RandomRotation(10),
+    transforms.ColorJitter(brightness=0.2, contrast=0.2),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+])
+transform_val_test = transforms.Compose([
     transforms.Resize((img_height, img_width)),
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
@@ -108,15 +116,15 @@ elif dataset_mode == '140k':
 elif dataset_mode == '190k':
     train_dataset = datasets.ImageFolder(
         root=os.path.join(data_dir, 'Train'),
-        transform=transform
+        transform=transform_train
     )
     val_dataset = datasets.ImageFolder(
         root=os.path.join(data_dir, 'Validation'),
-        transform=transform
+        transform=transform_val_test
     )
     test_dataset = datasets.ImageFolder(
         root=os.path.join(data_dir, 'Test'),
-        transform=transform
+        transform=transform_val_test
     )
     train_loader = DataLoader(
         train_dataset,
@@ -177,6 +185,7 @@ optimizer = optim.Adam([
     {'params': model.layer4.parameters(), 'lr': layer4_lr},
     {'params': model.fc.parameters(), 'lr': lr}
 ], weight_decay=weight_decay)
+scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
 
 scaler = torch.amp.GradScaler('cuda') if device.type == 'cuda' else None
 
@@ -185,6 +194,8 @@ if device.type == 'cuda':
 
 best_val_acc = 0.0
 best_model_path = os.path.join(teacher_dir, 'teacher_model_best.pth')
+patience = 3
+counter = 0
 
 for epoch in range(epochs):
     model.train()
@@ -241,6 +252,14 @@ for epoch in range(epochs):
         best_val_acc = val_accuracy
         torch.save(model.state_dict(), best_model_path)
         print(f'Saved best model with validation accuracy: {val_accuracy:.2f}% at epoch {epoch+1}')
+        counter = 0
+    else:
+        counter += 1
+        if counter >= patience:
+            print(f'Early stopping at epoch {epoch+1}')
+            break
+
+    scheduler.step()
 
 torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model_final.pth'))
 print(f'Saved final model at epoch {epochs}')
@@ -268,13 +287,13 @@ if dataset_mode == '190k':
     for img_path, label in test_dataset.samples:
         val_data.append({'filename': os.path.basename(img_path), 'label': label, 'path': img_path})
     val_data = pd.DataFrame(val_data)
-    transform_test = transform
+    transform_test = transform_val_test
 else:
     val_data = dataset.loader_test.dataset.data
     transform_test = dataset.loader_test.dataset.transform
 
 if dataset_mode in ['140k', '190k', '200k']:
-    img_column = 'filename-list' if dataset_mode in ['190k', '200k'] else 'path'
+    img_column = 'filename' if dataset_mode in ['190k', '200k'] else 'path'
 else:
     img_column = 'images_id'
 
@@ -316,9 +335,9 @@ with torch.no_grad():
         predicted_label = 'real' if prob > 0.5 else 'fake'
         true_label = 'real' if label == 1 else 'fake'
         axes[i].imshow(image)
-        axes[i].set_title(f'True: {true_label}\nPred: {predicted_label}', fontsize=10)
+        axes[i].set_title(f'True: {true_label}\nPred: {predicted_label}\nProb: {prob:.2f}', fontsize=10)
         axes[i].axis('off')
-        print(f"Image: {img_path}, True Label: {true_label}, Predicted: {predicted_label}")
+        print(f"Image: {img_path}, True Label: {true_label}, Predicted: {predicted_label}, Probability: {prob:.2f}")
 
 plt.tight_layout()
 file_path = os.path.join(teacher_dir, 'test_samples.png')
