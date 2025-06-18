@@ -32,11 +32,7 @@ def parse_args():
     parser.add_argument('--epochs', type=int, default=15,
                         help='Number of training epochs')
     parser.add_argument('--lr', type=float, default=0.0001,
-                        help='Learning rate for the fully connected layer')
-    parser.add_argument('--layer4_lr', type=float, default=1e-5,
-                        help='Learning rate for layer4 parameters')
-    parser.add_argument('--weight_decay', type=float, default=1e-4,
-                        help='Weight decay for the optimizer')
+                        help='Learning rate for the optimizer')
     return parser.parse_args()
 
 args = parse_args()
@@ -53,29 +49,12 @@ img_width = 256 if dataset_mode in ['rvf10k', '140k', '190k', '200k'] else args.
 batch_size = args.batch_size
 epochs = args.epochs
 lr = args.lr
-layer4_lr = args.layer4_lr
-weight_decay = args.weight_decay
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 if not os.path.exists(data_dir):
     raise FileNotFoundError(f"Directory {data_dir} not found!")
 if not os.path.exists(teacher_dir):
     os.makedirs(teacher_dir)
-
-# Define transforms
-transform_train = transforms.Compose([
-    transforms.Resize((img_height, img_width)),
-    transforms.RandomHorizontalFlip(),
-    transforms.RandomRotation(10),
-    transforms.ColorJitter(brightness=0.2, contrast=0.2),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-])
-transform_val_test = transforms.Compose([
-    transforms.Resize((img_height, img_width)),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-])
 
 if dataset_mode == 'hardfake':
     dataset = Dataset_selector(
@@ -114,17 +93,18 @@ elif dataset_mode == '140k':
         ddp=False
     )
 elif dataset_mode == '190k':
+    # Use ImageFolder for folder-based dataset
     train_dataset = datasets.ImageFolder(
         root=os.path.join(data_dir, 'Train'),
-        transform=transform_train
+        transform=transform
     )
     val_dataset = datasets.ImageFolder(
         root=os.path.join(data_dir, 'Validation'),
-        transform=transform_val_test
+        transform=transform
     )
     test_dataset = datasets.ImageFolder(
         root=os.path.join(data_dir, 'Test'),
-        transform=transform_val_test
+        transform=transform
     )
     train_loader = DataLoader(
         train_dataset,
@@ -182,10 +162,9 @@ for param in model.fc.parameters():
 
 criterion = nn.BCEWithLogitsLoss()
 optimizer = optim.Adam([
-    {'params': model.layer4.parameters(), 'lr': layer4_lr},
+    {'params': model.layer4.parameters(), 'lr': 1e-5},
     {'params': model.fc.parameters(), 'lr': lr}
-], weight_decay=weight_decay)
-scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
+], weight_decay=1e-4)
 
 scaler = torch.amp.GradScaler('cuda') if device.type == 'cuda' else None
 
@@ -194,8 +173,6 @@ if device.type == 'cuda':
 
 best_val_acc = 0.0
 best_model_path = os.path.join(teacher_dir, 'teacher_model_best.pth')
-patience = 3
-counter = 0
 
 for epoch in range(epochs):
     model.train()
@@ -252,14 +229,6 @@ for epoch in range(epochs):
         best_val_acc = val_accuracy
         torch.save(model.state_dict(), best_model_path)
         print(f'Saved best model with validation accuracy: {val_accuracy:.2f}% at epoch {epoch+1}')
-        counter = 0
-    else:
-        counter += 1
-        if counter >= patience:
-            print(f'Early stopping at epoch {epoch+1}')
-            break
-
-    scheduler.step()
 
 torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model_final.pth'))
 print(f'Saved final model at epoch {epochs}')
@@ -287,7 +256,7 @@ if dataset_mode == '190k':
     for img_path, label in test_dataset.samples:
         val_data.append({'filename': os.path.basename(img_path), 'label': label, 'path': img_path})
     val_data = pd.DataFrame(val_data)
-    transform_test = transform_val_test
+    transform_test = transform
 else:
     val_data = dataset.loader_test.dataset.data
     transform_test = dataset.loader_test.dataset.transform
@@ -335,9 +304,9 @@ with torch.no_grad():
         predicted_label = 'real' if prob > 0.5 else 'fake'
         true_label = 'real' if label == 1 else 'fake'
         axes[i].imshow(image)
-        axes[i].set_title(f'True: {true_label}\nPred: {predicted_label}\nProb: {prob:.2f}', fontsize=10)
+        axes[i].set_title(f'True: {true_label}\nPred: {predicted_label}', fontsize=10)
         axes[i].axis('off')
-        print(f"Image: {img_path}, True Label: {true_label}, Predicted: {predicted_label}, Probability: {prob:.2f}")
+        print(f"Image: {img_path}, True Label: {true_label}, Predicted: {predicted_label}")
 
 plt.tight_layout()
 file_path = os.path.join(teacher_dir, 'test_samples.png')
