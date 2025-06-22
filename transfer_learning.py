@@ -3,7 +3,10 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.distributed as dist
+import torch.multiprocessing as mp
 from torch.utils.data import DataLoader
+from torch.nn.parallel import DistributedDataParallel as DDP
 from torchvision import models
 from torch.amp import autocast, GradScaler
 from PIL import Image
@@ -15,7 +18,7 @@ from ptflops import get_model_complexity_info
 from data.dataset import Dataset_selector
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Transfer learning with ResNet50 for fake vs real face classification.')
+    parser = argparse.ArgumentParser(description='Transfer learning with ResNet50 for fake vs real face classification using DDP.')
     parser.add_argument('--dataset_mode', type=str, required=True, choices=['hardfake', 'rvf10k', '140k', '190k', '200k'],
                         help='Dataset to use: hardfake, rvf10k, 140k, 190k, or 200k')
     parser.add_argument('--data_dir', type=str, required=True,
@@ -32,11 +35,22 @@ def parse_args():
                         help='Number of training epochs')
     parser.add_argument('--lr', type=float, default=0.0001,
                         help='Learning rate for the optimizer')
+    parser.add_argument('--local_rank', type=int, default=0,
+                        help='Local rank for distributed training')
     return parser.parse_args()
 
-if __name__ == "__main__":
-    args = parse_args()
+def setup(rank, world_size):
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = '12355'
+    dist.init_process_group("nccl", rank=rank, world_size=world_size)
+    torch.cuda.set_device(rank)
 
+def cleanup():
+    dist.destroy_process_group()
+
+def train(rank, world_size, args):
+    setup(rank, world_size)
+    
     os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
     torch.backends.cudnn.benchmark = True
     torch.backends.cudnn.enabled = True
@@ -50,14 +64,13 @@ if __name__ == "__main__":
     epochs = args.epochs
     lr = args.lr
 
-    # Check for multiple GPUs
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    num_gpus = torch.cuda.device_count()
-    print(f"Using {num_gpus} GPU(s)")
+    device = torch.device(f'cuda:{rank}')
+    if rank == 0:
+        print(f"Using {world_size} GPU(s)")
 
     if not os.path.exists(data_dir):
         raise FileNotFoundError(f"Directory {data_dir} not found!")
-    if not os.path.exists(teacher_dir):
+    if rank == 0 and not os.path.exists(teacher_dir):
         os.makedirs(teacher_dir)
 
     # Initialize dataset
@@ -68,9 +81,9 @@ if __name__ == "__main__":
             hardfake_root_dir=data_dir,
             train_batch_size=batch_size,
             eval_batch_size=batch_size,
-            num_workers=4 * num_gpus,
+            num_workers=4,
             pin_memory=True,
-            ddp=False
+            ddp=True
         )
     elif dataset_mode == 'rvf10k':
         dataset = Dataset_selector(
@@ -80,9 +93,9 @@ if __name__ == "__main__":
             rvf10k_root_dir=data_dir,
             train_batch_size=batch_size,
             eval_batch_size=batch_size,
-            num_workers=4 * num_gpus,
+            num_workers=4,
             pin_memory=True,
-            ddp=False
+            ddp=True
         )
     elif dataset_mode == '140k':
         dataset = Dataset_selector(
@@ -93,9 +106,9 @@ if __name__ == "__main__":
             realfake140k_root_dir=data_dir,
             train_batch_size=batch_size,
             eval_batch_size=batch_size,
-            num_workers=4 * num_gpus,
+            num_workers=4,
             pin_memory=True,
-            ddp=False
+            ddp=True
         )
     elif dataset_mode == '200k':
         dataset = Dataset_selector(
@@ -106,9 +119,9 @@ if __name__ == "__main__":
             realfake200k_root_dir=data_dir,
             train_batch_size=batch_size,
             eval_batch_size=batch_size,
-            num_workers=4 * num_gpus,
+            num_workers=4,
             pin_memory=True,
-            ddp=False
+            ddp=True
         )
     elif dataset_mode == '190k':
         dataset = Dataset_selector(
@@ -116,9 +129,9 @@ if __name__ == "__main__":
             realfake190k_root_dir=data_dir,
             train_batch_size=batch_size,
             eval_batch_size=batch_size,
-            num_workers=4 * num_gpus,
+            num_workers=4,
             pin_memory=True,
-            ddp=False
+            ddp=True
         )
 
     train_loader = dataset.loader_train
@@ -129,25 +142,21 @@ if __name__ == "__main__":
     model = models.resnet50(weights='IMAGENET1K_V1')
     num_ftrs = model.fc.in_features
     model.fc = nn.Linear(num_ftrs, 1)
-    
-    # Wrap model with DataParallel for multi-GPU
-    if num_gpus > 1:
-        model = nn.DataParallel(model)
-        print("Model wrapped with DataParallel for multi-GPU training")
     model = model.to(device)
+    model = DDP(model, device_ids=[rank])
 
     # Freeze layers
     for param in model.parameters():
         param.requires_grad = False
-    for param in model.module.layer4.parameters() if num_gpus > 1 else model.layer4.parameters():
+    for param in model.module.layer4.parameters():
         param.requires_grad = True
-    for param in model.module.fc.parameters() if num_gpus > 1 else model.fc.parameters():
+    for param in model.module.fc.parameters():
         param.requires_grad = True
 
     criterion = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam([
-        {'params': model.module.layer4.parameters() if num_gpus > 1 else model.layer4.parameters(), 'lr': 1e-5},
-        {'params': model.module.fc.parameters() if num_gpus > 1 else model.fc.parameters(), 'lr': lr}
+        {'params': model.module.layer4.parameters(), 'lr': 1e-5},
+        {'params': model.module.fc.parameters(), 'lr': lr}
     ], weight_decay=1e-4)
 
     scaler = torch.amp.GradScaler('cuda') if device.type == 'cuda' else None
@@ -187,7 +196,8 @@ if __name__ == "__main__":
 
         train_loss = running_loss / len(train_loader)
         train_accuracy = 100 * correct_train / total_train
-        print(f'Epoch {epoch+1}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%')
+        if rank == 0:
+            print(f'Epoch {epoch+1}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%')
 
         model.eval()
         val_loss = 0.0
@@ -207,17 +217,17 @@ if __name__ == "__main__":
 
         val_loss = val_loss / len(val_loader)
         val_accuracy = 100 * correct_val / total_val
-        print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%')
+        if rank == 0:
+            print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%')
 
-        if val_accuracy > best_val_acc:
-            best_val_acc = val_accuracy
-            state_dict = model.module.state_dict() if num_gpus > 1 else model.state_dict()
-            torch.save(state_dict, best_model_path)
-            print(f'Saved best model with validation accuracy: {val_accuracy:.2f}% at epoch {epoch+1}')
+            if val_accuracy > best_val_acc:
+                best_val_acc = val_accuracy
+                torch.save(model.module.state_dict(), best_model_path)
+                print(f'Saved best model with validation accuracy: {val_accuracy:.2f}% at epoch {epoch+1}')
 
-    state_dict = model.module.state_dict() if num_gpus > 1 else model.state_dict()
-    torch.save(state_dict, os.path.join(teacher_dir, 'teacher_model_final.pth'))
-    print(f'Saved final model at epoch {epochs}')
+    if rank == 0:
+        torch.save(model.module.state_dict(), os.path.join(teacher_dir, 'teacher_model_final.pth'))
+        print(f'Saved final model at epoch {epochs}')
 
     model.eval()
     test_loss = 0.0
@@ -236,59 +246,63 @@ if __name__ == "__main__":
             total += labels.size(0)
     test_loss = test_loss / len(test_loader)
     test_accuracy = 100 * correct / total
-    print(f'Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.2f}%')
+    if rank == 0:
+        print(f'Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.2f}%')
 
-    val_data = dataset.loader_test.dataset.data
-    transform_test = dataset.loader_test.dataset.transform
-    img_column = 'filename' if dataset_mode in ['190k', '200k'] else 'path' if dataset_mode == '140k' else 'images_id'
+    if rank == 0:
+        val_data = dataset.loader_test.dataset.data
+        transform_test = dataset.loader_test.dataset.transform
+        img_column = 'filename' if dataset_mode in ['190k', '200k'] else 'path' if dataset_mode == '140k' else 'images_id'
 
-    random_indices = random.sample(range(len(val_data)), min(10, len(val_data)))
-    fig, axes = plt.subplots(2, 5, figsize=(15, 8))
-    axes = axes.ravel()
+        random_indices = random.sample(range(len(val_data)), min(10, len(val_data)))
+        fig, axes = plt.subplots(2, 5, figsize=(15, 8))
+        axes = axes.ravel()
 
-    with torch.no_grad():
-        for i, idx in enumerate(random_indices):
-            row = val_data.iloc[idx]
-            img_name = row[img_column]
-            label = row['label']
+        with torch.no_grad():
+            for i, idx in enumerate(random_indices):
+                row = val_data.iloc[idx]
+                img_name = row[img_column]
+                label = row['label']
 
-            if dataset_mode == '140k':
-                img_path = os.path.join(data_dir, img_name)
-            elif dataset_mode in ['190k', '200k']:
-                subfolder = 'Real' if label == 1 else 'Fake' if dataset_mode == '190k' else 'ai_images'
-                if dataset_mode == '190k':
-                    split = 'Test' if row['filename'].startswith('Test') else 'Validation'
-                    img_path = os.path.join(data_dir, split, subfolder, img_name)
+                if dataset_mode == '140k':
+                    img_path = os.path.join(data_dir, img_name)
+                elif dataset_mode in ['190k', '200k']:
+                    subfolder = 'Real' if label == 1 else 'Fake' if dataset_mode == '190k' else 'ai_images'
+                    if dataset_mode == '190k':
+                        split = 'Test' if row['filename'].startswith('Test') else 'Validation'
+                        img_path = os.path.join(data_dir, split, subfolder, img_name)
+                    else:
+                        img_path = os.path.join(data_dir, 'my_real_vs_ai_dataset', subfolder, img_name)
                 else:
-                    img_path = os.path.join(data_dir, 'my_real_vs_ai_dataset', subfolder, img_name)
-            else:
-                img_path = os.path.join(data_dir, img_name)
+                    img_path = os.path.join(data_dir, img_name)
 
-            if not os.path.exists(img_path):
-                print(f"Warning: Image not found: {img_path}")
-                axes[i].set_title("Image not found")
+                if not os.path.exists(img_path):
+                    print(f"Warning: Image not found: {img_path}")
+                    axes[i].set_title("Image not found")
+                    axes[i].axis('off')
+                    continue
+                image = Image.open(img_path).convert('RGB')
+                image_transformed = transform_test(image).unsqueeze(0).to(device)
+                with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
+                    output = model(image_transformed).squeeze(1)
+                prob = torch.sigmoid(output).item()
+                predicted_label = 'real' if prob > 0.5 else 'fake'
+                true_label = 'real' if label == 1 else 'fake'
+                axes[i].imshow(image)
+                axes[i].set_title(f'True: {true_label}\nPred: {predicted_label}', fontsize=10)
                 axes[i].axis('off')
-                continue
-            image = Image.open(img_path).convert('RGB')
-            image_transformed = transform_test(image).unsqueeze(0).to(device)
-            with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
-                output = model(image_transformed).squeeze(1)
-            prob = torch.sigmoid(output).item()
-            predicted_label = 'real' if prob > 0.5 else 'fake'
-            true_label = 'real' if label == 1 else 'fake'
-            axes[i].imshow(image)
-            axes[i].set_title(f'True: {true_label}\nPred: {predicted_label}', fontsize=10)
-            axes[i].axis('off')
-            print(f"Image: {img_path}, True Label: {true_label}, Predicted: {predicted_label}")
+                print(f"Image: {img_path}, True Label: {true_label}, Predicted: {predicted_label}")
 
-    plt.tight_layout()
-    file_path = os.path.join(teacher_dir, 'test_samples.png')
-    plt.savefig(file_path)
-    display(IPImage(filename=file_path))
+        plt.tight_layout()
+        file_path = os.path.join(teacher_dir, 'test_samples.png')
+        plt.savefig(file_path)
+        display(IPImage(filename=file_path))
 
-    model_for_flops = model.module if num_gpus > 1 else model
-    for param in model_for_flops.parameters():
-        param.requires_grad = True
-    flops, params = get_model_complexity_info(model_for_flops, (3, img_height, img_width), as_strings=True, print_per_layer_stat=True)
-    print('FLOPs:', flops)
-    print('Parameters:', params)
+        model_for_flops = model.module
+        for param in model_for_flops.parameters():
+            param.requires_grad = True
+        flops, params = get_model_complexity_info(model_for_flops, (3, img_height, img_width), as_strings=True, print_per_layer_stat=True)
+        print('FLOPs:', flops)
+        print('Parameters:', params)
+
+    cleanup()
