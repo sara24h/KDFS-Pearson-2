@@ -237,6 +237,7 @@ class Dataset_selector:
 
             # Clean paths in CSV
             full_data['path'] = full_data['path'].str.replace('/kaggle/input/stylegan-and-stylegan2-combined-dataset/', '')
+            full_data['path'] = full_data['path'].str.replace('Final Dataset/', '')
 
             # Split data into train (70%), validation (15%), test (15%)
             train_data, temp_data = train_test_split(
