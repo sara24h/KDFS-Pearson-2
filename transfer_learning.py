@@ -3,9 +3,7 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torch.distributed as dist
 from torch.utils.data import DataLoader
-from torch.utils.data.distributed import DistributedSampler
 from torchvision import models
 from torch.amp import autocast, GradScaler
 from PIL import Image
@@ -14,10 +12,10 @@ import random
 import matplotlib.pyplot as plt
 from IPython.display import Image as IPImage, display
 from ptflops import get_model_complexity_info
-from data.dataset import Dataset_selector
+from data.dataset import Dataset_selector  
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Transfer learning with ResNet50 for fake vs real face classification with DDP.')
+    parser = argparse.ArgumentParser(description='Transfer learning with ResNet50 for fake vs real face classification.')
     parser.add_argument('--dataset_mode', type=str, required=True, choices=['hardfake', 'rvf10k', '140k', '190k', '200k'],
                         help='Dataset to use: hardfake, rvf10k, 140k, 190k, or 200k')
     parser.add_argument('--data_dir', type=str, required=True,
@@ -25,42 +23,24 @@ def parse_args():
     parser.add_argument('--teacher_dir', type=str, default='teacher_dir',
                         help='Directory to save the trained model and outputs')
     parser.add_argument('--img_height', type=int, default=300,
-                        help='Height of input images (default: 300 for hardfake, 256 for others)')
+                        help='Height of input images (default: 300 for hardfake, 256 for rvf10k, 140k, 190k, and 200k)')
     parser.add_argument('--img_width', type=int, default=300,
-                        help='Width of input images (default: 300 for hardfake, 256 for others)')
+                        help='Width of input images (default: 300 for hardfake, 256 for rvf10k, 140k, 190k, and 200k)')
     parser.add_argument('--batch_size', type=int, default=32,
-                        help='Batch size for training (per GPU)')
+                        help='Batch size for training')
     parser.add_argument('--epochs', type=int, default=15,
                         help='Number of training epochs')
     parser.add_argument('--lr', type=float, default=0.0001,
                         help='Learning rate for the optimizer')
-    parser.add_argument('--local_rank', type=int, default=0,
-                        help='Local rank for distributed training')
     return parser.parse_args()
 
-def setup_ddp(local_rank):
-    """Initialize DDP environment."""
-    dist.init_process_group(backend='nccl')
-    torch.cuda.set_device(local_rank)
-    return dist.get_rank(), dist.get_world_size()
-
-def cleanup_ddp():
-    """Clean up DDP environment."""
-    dist.destroy_process_group()
-
-def main():
+if __name__ == "__main__":
     args = parse_args()
 
-    # Setup DDP
-    rank, world_size = setup_ddp(args.local_rank)
-    device = torch.device(f'cuda:{args.local_rank}' if torch.cuda.is_available() else 'cpu')
-
-    # Set environment variables for deterministic behavior
     os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
     torch.backends.cudnn.benchmark = True
     torch.backends.cudnn.enabled = True
 
-    # Arguments
     dataset_mode = args.dataset_mode
     data_dir = args.data_dir
     teacher_dir = args.teacher_dir
@@ -69,89 +49,99 @@ def main():
     batch_size = args.batch_size
     epochs = args.epochs
     lr = args.lr
-
-    # Create output directory on rank 0
-    if rank == 0 and not os.path.exists(teacher_dir):
-        os.makedirs(teacher_dir)
-
-    # Barrier to ensure directory is created before proceeding
-    dist.barrier()
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     if not os.path.exists(data_dir):
         raise FileNotFoundError(f"Directory {data_dir} not found!")
+    if not os.path.exists(teacher_dir):
+        os.makedirs(teacher_dir)
 
-    # Initialize dataset with DDP enabled
-    dataset_args = {
-        'dataset_mode': dataset_mode,
-        'train_batch_size': batch_size,
-        'eval_batch_size': batch_size,
-        'num_workers': 4,
-        'pin_memory': True,
-        'ddp': True
-    }
-
-    # Add dataset-specific arguments
+    # Initialize dataset using Dataset_selector from dataset.py
     if dataset_mode == 'hardfake':
-        dataset_args['hardfake_csv_file'] = os.path.join(data_dir, 'data.csv')
-        dataset_args['hardfake_root_dir'] = data_dir
+        dataset = Dataset_selector(
+            dataset_mode='hardfake',
+            hardfake_csv_file=os.path.join(data_dir, 'data.csv'),
+            hardfake_root_dir=data_dir,
+            train_batch_size=batch_size,
+            eval_batch_size=batch_size,
+            num_workers=4,
+            pin_memory=True,
+            ddp=False
+        )
     elif dataset_mode == 'rvf10k':
-        dataset_args['rvf10k_train_csv'] = os.path.join(data_dir, 'train.csv')
-        dataset_args['rvf10k_valid_csv'] = os.path.join(data_dir, 'valid.csv')
-        dataset_args['rvf10k_root_dir'] = data_dir
+        dataset = Dataset_selector(
+            dataset_mode='rvf10k',
+            rvf10k_train_csv=os.path.join(data_dir, 'train.csv'),
+            rvf10k_valid_csv=os.path.join(data_dir, 'valid.csv'),
+            rvf10k_root_dir=data_dir,
+            train_batch_size=batch_size,
+            eval_batch_size=batch_size,
+            num_workers=4,
+            pin_memory=True,
+            ddp=False
+        )
     elif dataset_mode == '140k':
-        dataset_args['realfake140k_train_csv'] = os.path.join(data_dir, 'train.csv')
-        dataset_args['realfake140k_valid_csv'] = os.path.join(data_dir, 'valid.csv')
-        dataset_args['realfake140k_test_csv'] = os.path.join(data_dir, 'test.csv')
-        dataset_args['realfake140k_root_dir'] = data_dir
+        dataset = Dataset_selector(
+            dataset_mode='140k',
+            realfake140k_train_csv=os.path.join(data_dir, 'train.csv'),
+            realfake140k_valid_csv=os.path.join(data_dir, 'valid.csv'),
+            realfake140k_test_csv=os.path.join(data_dir, 'test.csv'),
+            realfake140k_root_dir=data_dir,
+            train_batch_size=batch_size,
+            eval_batch_size=batch_size,
+            num_workers=4,
+            pin_memory=True,
+            ddp=False
+        )
     elif dataset_mode == '200k':
-        dataset_args['realfake200k_train_csv'] = os.path.join(data_dir, 'train_labels.csv')
-        dataset_args['realfake200k_val_csv'] = os.path.join(data_dir, 'val_labels.csv')
-        dataset_args['realfake200k_test_csv'] = os.path.join(data_dir, 'test_labels.csv')
-        dataset_args['realfake200k_root_dir'] = data_dir
+        dataset = Dataset_selector(
+            dataset_mode='200k',
+            realfake200k_train_csv=os.path.join(data_dir, 'train_labels.csv'),
+            realfake200k_val_csv=os.path.join(data_dir, 'val_labels.csv'),
+            realfake200k_test_csv=os.path.join(data_dir, 'test_labels.csv'),
+            realfake200k_root_dir=data_dir,
+            train_batch_size=batch_size,
+            eval_batch_size=batch_size,
+            num_workers=4,
+            pin_memory=True,
+            ddp=False
+        )
     elif dataset_mode == '190k':
-        dataset_args['realfake190k_root_dir'] = data_dir
+        dataset = Dataset_selector(
+            dataset_mode='190k',
+            realfake190k_root_dir=data_dir,
+            train_batch_size=batch_size,
+            eval_batch_size=batch_size,
+            num_workers=4,
+            pin_memory=True,
+            ddp=False
+        )
 
-    dataset = Dataset_selector(**dataset_args)
-
-    # Use DistributedSampler for train_loader
-    train_sampler = DistributedSampler(dataset.loader_train.dataset, num_replicas=world_size, rank=rank, shuffle=True)
-    train_loader = DataLoader(
-        dataset.loader_train.dataset,
-        batch_size=batch_size,
-        sampler=train_sampler,
-        num_workers=4,
-        pin_memory=True
-    )
+    train_loader = dataset.loader_train
     val_loader = dataset.loader_val
     test_loader = dataset.loader_test
 
-    # Initialize model
     model = models.resnet50(weights='IMAGENET1K_V1')
     num_ftrs = model.fc.in_features
     model.fc = nn.Linear(num_ftrs, 1)
     model = model.to(device)
 
-    # Wrap model with DDP
-    model = nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank])
-
-    # Freeze layers
     for param in model.parameters():
         param.requires_grad = False
-    for param in model.module.layer4.parameters():
+    for param in model.layer4.parameters():
         param.requires_grad = True
-    for param in model.module.fc.parameters():
+    for param in model.fc.parameters():
         param.requires_grad = True
 
-    # Define loss and optimizer
     criterion = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam([
-        {'params': model.module.layer4.parameters(), 'lr': 1e-5},
-        {'params': model.module.fc.parameters(), 'lr': lr}
+        {'params': model.layer4.parameters(), 'lr': 1e-5},
+        {'params': model.fc.parameters(), 'lr': lr}
     ], weight_decay=1e-4)
 
-    scaler = torch.amp.GradScaler('cuda') if device.type.startswith('cuda') else None
+    scaler = torch.amp.GradScaler('cuda') if device.type == 'cuda' else None
 
-    if device.type.startswith('cuda'):
+    if device.type == 'cuda':
         torch.cuda.empty_cache()
 
     best_val_acc = 0.0
@@ -159,7 +149,6 @@ def main():
 
     for epoch in range(epochs):
         model.train()
-        train_sampler.set_epoch(epoch)  # Ensure shuffling is different each epoch
         running_loss = 0.0
         correct_train = 0
         total_train = 0
@@ -168,11 +157,11 @@ def main():
             labels = labels.to(device).float()
             optimizer.zero_grad()
 
-            with torch.amp.autocast('cuda', enabled=device.type.startswith('cuda')):
+            with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
                 outputs = model(images).squeeze(1)
                 loss = criterion(outputs, labels)
 
-            if scaler:
+            if device.type == 'cuda':
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
@@ -180,19 +169,14 @@ def main():
                 loss.backward()
                 optimizer.step()
 
-            running_loss += loss.item() * images.size(0)
+            running_loss += loss.item()
             preds = (torch.sigmoid(outputs) > 0.5).float()
             correct_train += (preds == labels).sum().item()
             total_train += labels.size(0)
 
-        # Aggregate metrics across GPUs
-        metrics = torch.tensor([running_loss, correct_train, total_train], device=device)
-        dist.all_reduce(metrics, op=dist.ReduceOp.SUM)
-        train_loss = metrics[0].item() / metrics[2].item()
-        train_accuracy = 100 * metrics[1].item() / metrics[2].item()
-
-        if rank == 0:
-            print(f'Epoch {epoch+1}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%')
+        train_loss = running_loss / len(train_loader)
+        train_accuracy = 100 * correct_train / total_train
+        print(f'Epoch {epoch+1}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%')
 
         model.eval()
         val_loss = 0.0
@@ -202,32 +186,26 @@ def main():
             for images, labels in val_loader:
                 images = images.to(device)
                 labels = labels.to(device).float()
-                with torch.amp.autocast('cuda', enabled=device.type.startswith('cuda')):
+                with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
                     outputs = model(images).squeeze(1)
                     loss = criterion(outputs, labels)
-                val_loss += loss.item() * images.size(0)
+                val_loss += loss.item()
                 preds = (torch.sigmoid(outputs) > 0.5).float()
                 correct_val += (preds == labels).sum().item()
                 total_val += labels.size(0)
 
-        # Aggregate validation metrics
-        val_metrics = torch.tensor([val_loss, correct_val, total_val], device=device)
-        dist.all_reduce(val_metrics, op=dist.ReduceOp.SUM)
-        val_loss = val_metrics[0].item() / val_metrics[2].item()
-        val_accuracy = 100 * val_metrics[1].item() / val_metrics[2].item()
+        val_loss = val_loss / len(val_loader)
+        val_accuracy = 100 * correct_val / total_val
+        print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%')
 
-        if rank == 0:
-            print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%')
-            if val_accuracy > best_val_acc:
-                best_val_acc = val_accuracy
-                torch.save(model.module.state_dict(), best_model_path)
-                print(f'Saved best model with validation accuracy: {val_accuracy:.2f}% at epoch {epoch+1}')
+        if val_accuracy > best_val_acc:
+            best_val_acc = val_accuracy
+            torch.save(model.state_dict(), best_model_path)
+            print(f'Saved best model with validation accuracy: {val_accuracy:.2f}% at epoch {epoch+1}')
 
-    if rank == 0:
-        torch.save(model.module.state_dict(), os.path.join(teacher_dir, 'teacher_model_final.pth'))
-        print(f'Saved final model at epoch {epochs}')
+    torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model_final.pth'))
+    print(f'Saved final model at epoch {epochs}')
 
-    # Test evaluation
     model.eval()
     test_loss = 0.0
     correct = 0
@@ -236,32 +214,26 @@ def main():
         for images, labels in test_loader:
             images = images.to(device)
             labels = labels.to(device).float()
-            with torch.amp.autocast('cuda', enabled=device.type.startswith('cuda')):
+            with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
                 outputs = model(images).squeeze(1)
                 loss = criterion(outputs, labels)
-            test_loss += loss.item() * images.size(0)
+            test_loss += loss.item()
             preds = (torch.sigmoid(outputs) > 0.5).float()
             correct += (preds == labels).sum().item()
             total += labels.size(0)
+    test_loss = test_loss / len(test_loader)
+    test_accuracy = 100 * correct / total
+    print(f'Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.2f}%')
 
-    # Aggregate test metrics
-    test_metrics = torch.tensor([test_loss, correct, total], device=device)
-    dist.all_reduce(test_metrics, op=dist.ReduceOp.SUM)
-    test_loss = test_metrics[0].item() / test_metrics[2].item()
-    test_accuracy = 100 * test_metrics[1].item() / test_metrics[2].item()
+    val_data = dataset.loader_test.dataset.data
+    transform_test = dataset.loader_test.dataset.transform
+    img_column = 'filename' if dataset_mode in ['190k', '200k'] else 'path' if dataset_mode == '140k' else 'images_id'
 
-    if rank == 0:
-        print(f'Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.2f}%')
+    random_indices = random.sample(range(len(val_data)), min(10, len(val_data)))
+    fig, axes = plt.subplots(2, 5, figsize=(15, 8))
+    axes = axes.ravel()
 
-        # Visualization (only on rank 0)
-        val_data = dataset.loader_test.dataset.data
-        transform_test = dataset.loader_test.dataset.transform
-        img_column = 'filename' if dataset_mode in ['190k', '200k'] else 'path' if dataset_mode == '140k' else 'images_id'
-
-        random_indices = random.sample(range(len(val_data)), min(10, len(val_data)))
-        fig, axes = plt.subplots(2, 5, figsize=(15, 8))
-        axes = axes.ravel()
-
+    with torch.no_grad():
         for i, idx in enumerate(random_indices):
             row = val_data.iloc[idx]
             img_name = row[img_column]
@@ -280,38 +252,29 @@ def main():
                 img_path = os.path.join(data_dir, img_name)
 
             if not os.path.exists(img_path):
-                print(f'Warning: Image not found: {img_path}')
+                print(f"Warning: Image not found: {img_path}")
                 axes[i].set_title("Image not found")
                 axes[i].axis('off')
                 continue
-                
             image = Image.open(img_path).convert('RGB')
             image_transformed = transform_test(image).unsqueeze(0).to(device)
-            with torch.no_grad():
-                with torch.amp.autocast('cuda', enabled=device.type.startswith('cuda')):
-                    output = model(image_transformed).squeeze(1)
-                prob = torch.sigmoid(output).item()
-                predicted_label = 'real' if prob > 0.5 else 'fake'
-                true_label = 'real' if label == 1 else 'fake'
-                axes[i].imshow(image)
-                axes[i].set_title(f'True: {true_label}\nPred: {predicted_label}', fontsize=10)
-                axes[i].axis('off')
-                print(f'Image: {img_path}, True Label: {true_label}, Predicted Label: {predicted_label}')
+            with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
+                output = model(image_transformed).squeeze(1)
+            prob = torch.sigmoid(output).item()
+            predicted_label = 'real' if prob > 0.5 else 'fake'
+            true_label = 'real' if label == 1 else 'fake'
+            axes[i].imshow(image)
+            axes[i].set_title(f'True: {true_label}\nPred: {predicted_label}', fontsize=10)
+            axes[i].axis('off')
+            print(f"Image: {img_path}, True Label: {true_label}, Predicted: {predicted_label}")
 
-        plt.tight_layout()
-        file_path = os.path.join(teacher_dir, 'test_samples.png')
-        plt.savefig(file_path)
-        display(IPImage(filename=file_path))
+    plt.tight_layout()
+    file_path = os.path.join(teacher_dir, 'test_samples.png')
+    plt.savefig(file_path)
+    display(IPImage(filename=file_path))
 
-        # Model complexity
-        for param in model.module.parameters():
-            param.requires_grad = True
-        flops, params = get_model_complexity_info(model.module, (3, img_height, img_width), as_strings=True, print_per_layer_stat=True)
-        print(f'FLOPs: {flops}')
-        print(f'Parameters: {params}')
-
-    # Cleanup
-    cleanup_ddp()
-
-if __name__ == "__main__":
-    main()
+    for param in model.parameters():
+        param.requires_grad = True
+    flops, params = get_model_complexity_info(model, (3, img_height, img_width), as_strings=True, print_per_layer_stat=True)
+    print('FLOPs:', flops)
+    print('Parameters:', params)
