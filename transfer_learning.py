@@ -48,6 +48,10 @@ def setup(rank, world_size):
 def cleanup():
     dist.destroy_process_group()
 
+def reduce_tensor(tensor, world_size):
+    dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
+    return tensor / world_size
+
 def train(rank, world_size, args):
     setup(rank, world_size)
     
@@ -74,6 +78,7 @@ def train(rank, world_size, args):
         os.makedirs(teacher_dir)
 
     # Initialize dataset
+    num_workers = min(4, os.cpu_count() // world_size)
     if dataset_mode == 'hardfake':
         dataset = Dataset_selector(
             dataset_mode='hardfake',
@@ -81,7 +86,7 @@ def train(rank, world_size, args):
             hardfake_root_dir=data_dir,
             train_batch_size=batch_size,
             eval_batch_size=batch_size,
-            num_workers=4,
+            num_workers=num_workers,
             pin_memory=True,
             ddp=True
         )
@@ -93,7 +98,7 @@ def train(rank, world_size, args):
             rvf10k_root_dir=data_dir,
             train_batch_size=batch_size,
             eval_batch_size=batch_size,
-            num_workers=4,
+            num_workers=num_workers,
             pin_memory=True,
             ddp=True
         )
@@ -106,7 +111,7 @@ def train(rank, world_size, args):
             realfake140k_root_dir=data_dir,
             train_batch_size=batch_size,
             eval_batch_size=batch_size,
-            num_workers=4,
+            num_workers=num_workers,
             pin_memory=True,
             ddp=True
         )
@@ -119,7 +124,7 @@ def train(rank, world_size, args):
             realfake200k_root_dir=data_dir,
             train_batch_size=batch_size,
             eval_batch_size=batch_size,
-            num_workers=4,
+            num_workers=num_workers,
             pin_memory=True,
             ddp=True
         )
@@ -129,7 +134,7 @@ def train(rank, world_size, args):
             realfake190k_root_dir=data_dir,
             train_batch_size=batch_size,
             eval_batch_size=batch_size,
-            num_workers=4,
+            num_workers=num_workers,
             pin_memory=True,
             ddp=True
         )
@@ -189,13 +194,20 @@ def train(rank, world_size, args):
                 loss.backward()
                 optimizer.step()
 
-            running_loss += loss.item()
+            running_loss += loss.item() * images.size(0)
             preds = (torch.sigmoid(outputs) > 0.5).float()
             correct_train += (preds == labels).sum().item()
             total_train += labels.size(0)
 
-        train_loss = running_loss / len(train_loader)
-        train_accuracy = 100 * correct_train / total_train
+        # Reduce metrics across all processes
+        running_loss_tensor = torch.tensor(running_loss).to(device)
+        correct_train_tensor = torch.tensor(correct_train).to(device)
+        total_train_tensor = torch.tensor(total_train).to(device)
+        running_loss_tensor = reduce_tensor(running_loss_tensor, world_size)
+        correct_train_tensor = reduce_tensor(correct_train_tensor, world_size)
+        total_train_tensor = reduce_tensor(total_train_tensor, world_size)
+        train_loss = running_loss_tensor.item() / total_train_tensor.item()
+        train_accuracy = 100 * correct_train_tensor.item() / total_train_tensor.item()
         if rank == 0:
             print(f'Epoch {epoch+1}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%')
 
@@ -210,22 +222,31 @@ def train(rank, world_size, args):
                 with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
                     outputs = model(images).squeeze(1)
                     loss = criterion(outputs, labels)
-                val_loss += loss.item()
+                val_loss += loss.item() * images.size(0)
                 preds = (torch.sigmoid(outputs) > 0.5).float()
                 correct_val += (preds == labels).sum().item()
                 total_val += labels.size(0)
 
-        val_loss = val_loss / len(val_loader)
-        val_accuracy = 100 * correct_val / total_val
+        # Reduce validation metrics
+        val_loss_tensor = torch.tensor(val_loss).to(device)
+        correct_val_tensor = torch.tensor(correct_val).to(device)
+        total_val_tensor = torch.tensor(total_val).to(device)
+        val_loss_tensor = reduce_tensor(val_loss_tensor, world_size)
+        correct_val_tensor = reduce_tensor(correct_val_tensor, world_size)
+        total_val_tensor = reduce_tensor(total_val_tensor, world_size)
+        val_loss = val_loss_tensor.item() / total_val_tensor.item()
+        val_accuracy = 100 * correct_val_tensor.item() / total_val_tensor.item()
         if rank == 0:
             print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%')
 
             if val_accuracy > best_val_acc:
                 best_val_acc = val_accuracy
+                dist.barrier()
                 torch.save(model.module.state_dict(), best_model_path)
                 print(f'Saved best model with validation accuracy: {val_accuracy:.2f}% at epoch {epoch+1}')
 
     if rank == 0:
+        dist.barrier()
         torch.save(model.module.state_dict(), os.path.join(teacher_dir, 'teacher_model_final.pth'))
         print(f'Saved final model at epoch {epochs}')
 
@@ -240,12 +261,20 @@ def train(rank, world_size, args):
             with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
                 outputs = model(images).squeeze(1)
                 loss = criterion(outputs, labels)
-            test_loss += loss.item()
+            test_loss += loss.item() * images.size(0)
             preds = (torch.sigmoid(outputs) > 0.5).float()
             correct += (preds == labels).sum().item()
             total += labels.size(0)
-    test_loss = test_loss / len(test_loader)
-    test_accuracy = 100 * correct / total
+
+    # Reduce test metrics
+    test_loss_tensor = torch.tensor(test_loss).to(device)
+    correct_test_tensor = torch.tensor(correct).to(device)
+    total_test_tensor = torch.tensor(total).to(device)
+    test_loss_tensor = reduce_tensor(test_loss_tensor, world_size)
+    correct_test_tensor = reduce_tensor(correct_test_tensor, world_size)
+    total_test_tensor = reduce_tensor(total_test_tensor, world_size)
+    test_loss = test_loss_tensor.item() / total_test_tensor.item()
+    test_accuracy = 100 * correct_test_tensor.item() / total_test_tensor.item()
     if rank == 0:
         print(f'Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.2f}%')
 
@@ -296,7 +325,8 @@ def train(rank, world_size, args):
         plt.tight_layout()
         file_path = os.path.join(teacher_dir, 'test_samples.png')
         plt.savefig(file_path)
-        display(IPImage(filename=file_path))
+        if 'JUPYTER' in os.environ:
+            display(IPImage(filename=file_path))
 
         model_for_flops = model.module
         for param in model_for_flops.parameters():
@@ -306,3 +336,16 @@ def train(rank, world_size, args):
         print('Parameters:', params)
 
     cleanup()
+
+def main():
+    args = parse_args()
+    world_size = torch.cuda.device_count()
+    mp.spawn(train, args=(world_size, args), nprocs=world_size, join=True)
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        print(f"Main error: {e}")
+        cleanup()
+        raise
