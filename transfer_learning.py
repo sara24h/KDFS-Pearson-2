@@ -4,9 +4,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.distributed as dist
-import torch.multiprocessing as mp
 from torch.utils.data import DataLoader
-from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data.distributed import DistributedSampler
 from torchvision import models
 from torch.amp import autocast, GradScaler
 from PIL import Image
@@ -18,7 +17,7 @@ from ptflops import get_model_complexity_info
 from data.dataset import Dataset_selector
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Transfer learning with ResNet50 for fake vs real face classification using DDP.')
+    parser = argparse.ArgumentParser(description='Transfer learning with ResNet50 for fake vs real face classification with DDP.')
     parser.add_argument('--dataset_mode', type=str, required=True, choices=['hardfake', 'rvf10k', '140k', '190k', '200k'],
                         help='Dataset to use: hardfake, rvf10k, 140k, 190k, or 200k')
     parser.add_argument('--data_dir', type=str, required=True,
@@ -26,11 +25,11 @@ def parse_args():
     parser.add_argument('--teacher_dir', type=str, default='teacher_dir',
                         help='Directory to save the trained model and outputs')
     parser.add_argument('--img_height', type=int, default=300,
-                        help='Height of input images (default: 300 for hardfake, 256 for rvf10k, 140k, 190k, and 200k)')
+                        help='Height of input images (default: 300 for hardfake, 256 for others)')
     parser.add_argument('--img_width', type=int, default=300,
-                        help='Width of input images (default: 300 for hardfake, 256 for rvf10k, 140k, 190k, and 200k)')
+                        help='Width of input images (default: 300 for hardfake, 256 for others)')
     parser.add_argument('--batch_size', type=int, default=32,
-                        help='Batch size for training')
+                        help='Batch size for training (per GPU)')
     parser.add_argument('--epochs', type=int, default=15,
                         help='Number of training epochs')
     parser.add_argument('--lr', type=float, default=0.0001,
@@ -39,27 +38,29 @@ def parse_args():
                         help='Local rank for distributed training')
     return parser.parse_args()
 
-def setup(rank, world_size):
-    os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12355'
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
-    torch.cuda.set_device(rank)
+def setup_ddp(local_rank):
+    """Initialize DDP environment."""
+    dist.init_process_group(backend='nccl')
+    torch.cuda.set_device(local_rank)
+    return dist.get_rank(), dist.get_world_size()
 
-def cleanup():
-    if dist.is_initialized():
-        dist.destroy_process_group()
+def cleanup_ddp():
+    """Clean up DDP environment."""
+    dist.destroy_process_group()
 
-def reduce_tensor(tensor, world_size):
-    dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
-    return tensor / world_size
+def main():
+    args = parse_args()
 
-def train(rank, world_size, args):
-    setup(rank, world_size)
-    
+    # Setup DDP
+    rank, world_size = setup_ddp(args.local_rank)
+    device = torch.device(f'cuda:{args.local_rank}' if torch.cuda.is_available() else 'cpu')
+
+    # Set environment variables for deterministic behavior
     os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
     torch.backends.cudnn.benchmark = True
     torch.backends.cudnn.enabled = True
 
+    # Arguments
     dataset_mode = args.dataset_mode
     data_dir = args.data_dir
     teacher_dir = args.teacher_dir
@@ -69,76 +70,41 @@ def train(rank, world_size, args):
     epochs = args.epochs
     lr = args.lr
 
-    device = torch.device(f'cuda:{rank}')
-    if rank == 0:
-        print(f"Using {world_size} GPU(s)")
+    # Create output directory on rank 0
+    if rank == 0 and not os.path.exists(teacher_dir):
+        os.makedirs(teacher_dir)
+
+    # Barrier to ensure directory is created before proceeding
+    dist.barrier()
 
     if not os.path.exists(data_dir):
         raise FileNotFoundError(f"Directory {data_dir} not found!")
-    if rank == 0 and not os.path.exists(teacher_dir):
-        os.makedirs(teacher_dir)
-        
-    if dataset_mode == 'hardfake':
-        dataset = Dataset_selector(
-            dataset_mode='hardfake',
-            hardfake_csv_file=os.path.join(data_dir, 'data.csv'),
-            hardfake_root_dir=data_dir,
-            train_batch_size=batch_size,
-            eval_batch_size=batch_size,
-            num_workers=4,
-            pin_memory=True,
-            ddp=True
-        )
-    elif dataset_mode == 'rvf10k':
-        dataset = Dataset_selector(
-            dataset_mode='rvf10k',
-            rvf10k_train_csv=os.path.join(data_dir, 'train.csv'),
-            rvf10k_valid_csv=os.path.join(data_dir, 'valid.csv'),
-            rvf10k_root_dir=data_dir,
-            train_batch_size=batch_size,
-            eval_batch_size=batch_size,
-            num_workers=4,
-            pin_memory=True,
-            ddp=True
-        )
-    elif dataset_mode == '140k':
-        dataset = Dataset_selector(
-            dataset_mode='140k',
-            realfake140k_train_csv=os.path.join(data_dir, 'train.csv'),
-            realfake140k_valid_csv=os.path.join(data_dir, 'valid.csv'),
-            realfake140k_test_csv=os.path.join(data_dir, 'test.csv'),
-            realfake140k_root_dir=data_dir,
-            train_batch_size=batch_size,
-            eval_batch_size=batch_size,
-            num_workers=4,
-            pin_memory=True,
-            ddp=True
-        )
-    elif dataset_mode == '200k':
-        dataset = Dataset_selector(
-            dataset_mode='200k',
-            realfake200k_train_csv=os.path.join(data_dir, 'train_labels.csv'),
-            realfake200k_val_csv=os.path.join(data_dir, 'val_labels.csv'),
-            realfake200k_test_csv=os.path.join(data_dir, 'test_labels.csv'),
-            realfake200k_root_dir=data_dir,
-            train_batch_size=batch_size,
-            eval_batch_size=batch_size,
-            num_workers=4,
-            pin_memory=True,
-            ddp=True
-        )
-    elif dataset_mode == '190k':
-        dataset = Dataset_selector(
-            dataset_mode='190k',
-            realfake190k_root_dir=data_dir,
-            train_batch_size=batch_size,
-            eval_batch_size=batch_size,
-            num_workers=4,
-            pin_memory=True,
-            ddp=True
-        )
 
-    train_loader = dataset.loader_train
+    # Initialize dataset with DDP enabled
+    dataset = Dataset_selector(
+        dataset_mode=dataset_mode,
+        **{
+            f'{dataset_mode}_csv_file' if dataset_mode == 'hardfake' else f'{dataset_mode}_train_csv': os.path.join(data_dir, 'data.csv' if dataset_mode == 'hardfake' else 'train.csv'),
+            f'{dataset_mode}_valid_csv' if dataset_mode in ['rvf10k', '140k', '200k']: os.path.join(data_dir, 'valid.csv' if dataset_mode != '200k' else 'val_labels.csv'),
+            f'{dataset_mode}_test_csv' if dataset_mode in ['140k', '200k']: os.path.join(data_dir, 'test.csv' if dataset_mode == '140k' else 'test_labels.csv'),
+            f'{dataset_mode}_root_dir': data_dir,
+            'train_batch_size': batch_size,
+            'eval_batch_size': batch_size,
+            'num_workers': 4,
+            'pin_memory': True,
+            'ddp': True
+        }
+    )
+
+    # Use DistributedSampler for train_loader
+    train_sampler = DistributedSampler(dataset.loader_train.dataset, num_replicas=world_size, rank=rank, shuffle=True)
+    train_loader = DataLoader(
+        dataset.loader_train.dataset,
+        batch_size=batch_size,
+        sampler=train_sampler,
+        num_workers=4,
+        pin_memory=True
+    )
     val_loader = dataset.loader_val
     test_loader = dataset.loader_test
 
@@ -147,7 +113,9 @@ def train(rank, world_size, args):
     num_ftrs = model.fc.in_features
     model.fc = nn.Linear(num_ftrs, 1)
     model = model.to(device)
-    model = DDP(model, device_ids=[rank], find_unused_parameters=True)
+
+    # Wrap model with DDP
+    model = nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank])
 
     # Freeze layers
     for param in model.parameters():
@@ -157,15 +125,16 @@ def train(rank, world_size, args):
     for param in model.module.fc.parameters():
         param.requires_grad = True
 
+    # Define loss and optimizer
     criterion = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam([
         {'params': model.module.layer4.parameters(), 'lr': 1e-5},
         {'params': model.module.fc.parameters(), 'lr': lr}
     ], weight_decay=1e-4)
 
-    scaler = torch.amp.GradScaler('cuda') if device.type == 'cuda' else None
+    scaler = torch.amp.GradScaler('cuda') if device.type.startswith('cuda') else None
 
-    if device.type == 'cuda':
+    if device.type.startswith('cuda'):
         torch.cuda.empty_cache()
 
     best_val_acc = 0.0
@@ -173,19 +142,20 @@ def train(rank, world_size, args):
 
     for epoch in range(epochs):
         model.train()
+        train_sampler.set_epoch(epoch)  # Ensure shuffling is different each epoch
         running_loss = 0.0
         correct_train = 0
         total_train = 0
         for images, labels in train_loader:
             images = images.to(device)
             labels = labels.to(device).float()
-            optimizer.zero_grad(set_to_none=True)
+            optimizer.zero_grad()
 
-            with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
+            with torch.amp.autocast('cuda', enabled=device.type.startswith('cuda')):
                 outputs = model(images).squeeze(1)
                 loss = criterion(outputs, labels)
 
-            if device.type == 'cuda':
+            if scaler:
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
@@ -198,15 +168,12 @@ def train(rank, world_size, args):
             correct_train += (preds == labels).sum().item()
             total_train += labels.size(0)
 
-        # Reduce metrics across all processes
-        running_loss_tensor = torch.tensor(running_loss).to(device)
-        correct_train_tensor = torch.tensor(correct_train).to(device)
-        total_train_tensor = torch.tensor(total_train).to(device)
-        running_loss_tensor = reduce_tensor(running_loss_tensor, world_size)
-        correct_train_tensor = reduce_tensor(correct_train_tensor, world_size)
-        total_train_tensor = reduce_tensor(total_train_tensor, world_size)
-        train_loss = running_loss_tensor.item() / total_train_tensor.item()
-        train_accuracy = 100 * correct_train_tensor.item() / total_train_tensor.item()
+        # Aggregate metrics across GPUs
+        metrics = torch.tensor([running_loss, correct_train, total_train], device=device)
+        dist.all_reduce(metrics, op=dist.ReduceOp.SUM)
+        train_loss = metrics[0].item() / metrics[2].item()
+        train_accuracy = 100 * metrics[1].item() / metrics[2].item()
+
         if rank == 0:
             print(f'Epoch {epoch+1}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%')
 
@@ -218,7 +185,7 @@ def train(rank, world_size, args):
             for images, labels in val_loader:
                 images = images.to(device)
                 labels = labels.to(device).float()
-                with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
+                with torch.amp.autocast('cuda', enabled=device.type.startswith('cuda')):
                     outputs = model(images).squeeze(1)
                     loss = criterion(outputs, labels)
                 val_loss += loss.item() * images.size(0)
@@ -226,29 +193,24 @@ def train(rank, world_size, args):
                 correct_val += (preds == labels).sum().item()
                 total_val += labels.size(0)
 
-        # Reduce validation metrics
-        val_loss_tensor = torch.tensor(val_loss).to(device)
-        correct_val_tensor = torch.tensor(correct_val).to(device)
-        total_val_tensor = torch.tensor(total_val).to(device)
-        val_loss_tensor = reduce_tensor(val_loss_tensor, world_size)
-        correct_val_tensor = reduce_tensor(correct_val_tensor, world_size)
-        total_val_tensor = reduce_tensor(total_val_tensor, world_size)
-        val_loss = val_loss_tensor.item() / total_val_tensor.item()
-        val_accuracy = 100 * correct_val_tensor.item() / total_val_tensor.item()
+        # Aggregate validation metrics
+        val_metrics = torch.tensor([val_loss, correct_val, total_val], device=device)
+        dist.all_reduce(val_metrics, op=dist.ReduceOp.SUM)
+        val_loss = val_metrics[0].item() / val_metrics[2].item()
+        val_accuracy = 100 * val_metrics[1].item() / val_metrics[2].item()
+
         if rank == 0:
             print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%')
-
             if val_accuracy > best_val_acc:
                 best_val_acc = val_accuracy
-                dist.barrier()
                 torch.save(model.module.state_dict(), best_model_path)
                 print(f'Saved best model with validation accuracy: {val_accuracy:.2f}% at epoch {epoch+1}')
 
     if rank == 0:
-        dist.barrier()
         torch.save(model.module.state_dict(), os.path.join(teacher_dir, 'teacher_model_final.pth'))
         print(f'Saved final model at epoch {epochs}')
 
+    # Test evaluation
     model.eval()
     test_loss = 0.0
     correct = 0
@@ -257,7 +219,7 @@ def train(rank, world_size, args):
         for images, labels in test_loader:
             images = images.to(device)
             labels = labels.to(device).float()
-            with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
+            with torch.amp.autocast('cuda', enabled=device.type.startswith('cuda')):
                 outputs = model(images).squeeze(1)
                 loss = criterion(outputs, labels)
             test_loss += loss.item() * images.size(0)
@@ -265,19 +227,16 @@ def train(rank, world_size, args):
             correct += (preds == labels).sum().item()
             total += labels.size(0)
 
-    # Reduce test metrics
-    test_loss_tensor = torch.tensor(test_loss).to(device)
-    correct_test_tensor = torch.tensor(correct).to(device)
-    total_test_tensor = torch.tensor(total).to(device)
-    test_loss_tensor = reduce_tensor(test_loss_tensor, world_size)
-    correct_test_tensor = reduce_tensor(correct_test_tensor, world_size)
-    total_test_tensor = reduce_tensor(total_test_tensor, world_size)
-    test_loss = test_loss_tensor.item() / total_test_tensor.item()
-    test_accuracy = 100 * correct_test_tensor.item() / total_test_tensor.item()
+    # Aggregate test metrics
+    test_metrics = torch.tensor([test_loss, correct, total], device=device)
+    dist.all_reduce(test_metrics, op=dist.ReduceOp.SUM)
+    test_loss = test_metrics[0].item() / test_metrics[2].item()
+    test_accuracy = 100 * test_metrics[1].item() / test_metrics[2].item()
+
     if rank == 0:
         print(f'Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.2f}%')
 
-    if rank == 0:
+        # Visualization (only on rank 0)
         val_data = dataset.loader_test.dataset.data
         transform_test = dataset.loader_test.dataset.transform
         img_column = 'filename' if dataset_mode in ['190k', '200k'] else 'path' if dataset_mode == '140k' else 'images_id'
@@ -311,7 +270,7 @@ def train(rank, world_size, args):
                     continue
                 image = Image.open(img_path).convert('RGB')
                 image_transformed = transform_test(image).unsqueeze(0).to(device)
-                with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
+                with torch.amp.autocast('cuda', enabled=device.type.startswith('cuda')):
                     output = model(image_transformed).squeeze(1)
                 prob = torch.sigmoid(output).item()
                 predicted_label = 'real' if prob > 0.5 else 'fake'
@@ -324,27 +283,17 @@ def train(rank, world_size, args):
         plt.tight_layout()
         file_path = os.path.join(teacher_dir, 'test_samples.png')
         plt.savefig(file_path)
-        if 'JUPYTER' in os.environ:
-            display(IPImage(filename=file_path))
+        display(IPImage(filename=file_path))
 
-        model_for_flops = model.module
-        for param in model_for_flops.parameters():
+        # Model complexity
+        for param in model.module.parameters():
             param.requires_grad = True
-        flops, params = get_model_complexity_info(model_for_flops, (3, img_height, img_width), as_strings=True, print_per_layer_stat=True)
+        flops, params = get_model_complexity_info(model.module, (3, img_height, img_width), as_strings=True, print_per_layer_stat=True)
         print('FLOPs:', flops)
         print('Parameters:', params)
 
-    cleanup()
-
-def main():
-    args = parse_args()
-    world_size = torch.cuda.device_count()
-    mp.spawn(train, args=(world_size, args), nprocs=world_size, join=True)
+    # Clean up DDP
+    cleanup_ddp()
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        print(f"Main error: {e}")
-        cleanup()
-        raise
+    main()
