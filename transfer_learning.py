@@ -16,16 +16,17 @@ from data.dataset import Dataset_selector
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Transfer learning with ResNet50 for fake vs real face classification.')
-    parser.add_argument('--dataset_mode', type=str, required=True, choices=['hardfake', 'rvf10k', '140k', '190k', '200k'],
-                        help='Dataset to use: hardfake, rvf10k, 140k, 190k, or 200k')
+    parser.add_argument('--dataset_mode', type=str, required=True, 
+                        choices=['hardfake', 'rvf10k', '140k', '190k', '200k', '12.9k'],
+                        help='Dataset to use: hardfake, rvf10k, 140k, 190k, 200k, or 12.9k')
     parser.add_argument('--data_dir', type=str, required=True,
                         help='Path to the dataset directory containing images and CSV file(s)')
     parser.add_argument('--teacher_dir', type=str, default='teacher_dir',
                         help='Directory to save the trained model and outputs')
     parser.add_argument('--img_height', type=int, default=300,
-                        help='Height of input images (default: 300 for hardfake, 256 for rvf10k, 140k, 190k, and 200k)')
+                        help='Height of input images (default: 300 for hardfake, 256 for others)')
     parser.add_argument('--img_width', type=int, default=300,
-                        help='Width of input images (default: 300 for hardfake, 256 for rvf10k, 140k, 190k, and 200k)')
+                        help='Width of input images (default: 300 for hardfake, 256 for others)')
     parser.add_argument('--batch_size', type=int, default=32,
                         help='Batch size for training')
     parser.add_argument('--epochs', type=int, default=15,
@@ -44,8 +45,8 @@ if __name__ == "__main__":
     dataset_mode = args.dataset_mode
     data_dir = args.data_dir
     teacher_dir = args.teacher_dir
-    img_height = 256 if dataset_mode in ['rvf10k', '140k', '190k', '200k'] else args.img_height
-    img_width = 256 if dataset_mode in ['rvf10k', '140k', '190k', '200k'] else args.img_width
+    img_height = 256 if dataset_mode in ['rvf10k', '140k', '190k', '200k', '12.9k'] else args.img_height
+    img_width = 256 if dataset_mode in ['rvf10k', '140k', '190k', '200k', '12.9k'] else args.img_width
     batch_size = args.batch_size
     epochs = args.epochs
     lr = args.lr
@@ -110,6 +111,17 @@ if __name__ == "__main__":
         dataset = Dataset_selector(
             dataset_mode='190k',
             realfake190k_root_dir=data_dir,
+            train_batch_size=batch_size,
+            eval_batch_size=batch_size,
+            num_workers=4,
+            pin_memory=True,
+            ddp=False
+        )
+    elif dataset_mode == '12.9k':
+        dataset = Dataset_selector(
+            dataset_mode='12.9k',
+            dataset_12_9k_csv_file=os.path.join(data_dir, 'dataset.csv'),
+            dataset_12_9k_root_dir=data_dir,
             train_batch_size=batch_size,
             eval_batch_size=batch_size,
             num_workers=4,
@@ -227,7 +239,7 @@ if __name__ == "__main__":
 
     val_data = dataset.loader_test.dataset.data
     transform_test = dataset.loader_test.dataset.transform
-    img_column = 'filename' if dataset_mode in ['190k', '200k'] else 'path' if dataset_mode == '140k' else 'images_id'
+    img_column = 'filename' if dataset_mode in ['190k', '200k'] else 'path' if dataset_mode in ['140k', '12.9k'] else 'images_id'
 
     random_indices = random.sample(range(len(val_data)), min(10, len(val_data)))
     fig, axes = plt.subplots(2, 5, figsize=(15, 8))
@@ -240,6 +252,8 @@ if __name__ == "__main__":
             label = row['label']
 
             if dataset_mode == '140k':
+                img_path = os.path.join(data_dir, img_name)
+            elif dataset_mode == '12.9k':
                 img_path = os.path.join(data_dir, img_name)
             elif dataset_mode in ['190k', '200k']:
                 subfolder = 'Real' if label == 1 else 'Fake' if dataset_mode == '190k' else 'ai_images'
