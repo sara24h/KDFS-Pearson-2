@@ -81,20 +81,37 @@ def main():
         raise FileNotFoundError(f"Directory {data_dir} not found!")
 
     # Initialize dataset with DDP enabled
-    dataset = Dataset_selector(
-        dataset_mode=dataset_mode,
-        **{
-            f'{dataset_mode}_csv_file' if dataset_mode == 'hardfake' else f'{dataset_mode}_train_csv': os.path.join(data_dir, 'data.csv' if dataset_mode == 'hardfake' else 'train.csv'),
-            f'{dataset_mode}_valid_csv' if dataset_mode in ['rvf10k', '140k', '200k']: os.path.join(data_dir, 'valid.csv' if dataset_mode != '200k' else 'val_labels.csv'),
-            f'{dataset_mode}_test_csv' if dataset_mode in ['140k', '200k']: os.path.join(data_dir, 'test.csv' if dataset_mode == '140k' else 'test_labels.csv'),
-            f'{dataset_mode}_root_dir': data_dir,
-            'train_batch_size': batch_size,
-            'eval_batch_size': batch_size,
-            'num_workers': 4,
-            'pin_memory': True,
-            'ddp': True
-        }
-    )
+    dataset_args = {
+        'dataset_mode': dataset_mode,
+        'train_batch_size': batch_size,
+        'eval_batch_size': batch_size,
+        'num_workers': 4,
+        'pin_memory': True,
+        'ddp': True
+    }
+
+    # Add dataset-specific arguments
+    if dataset_mode == 'hardfake':
+        dataset_args['hardfake_csv_file'] = os.path.join(data_dir, 'data.csv')
+        dataset_args['hardfake_root_dir'] = data_dir
+    elif dataset_mode == 'rvf10k':
+        dataset_args['rvf10k_train_csv'] = os.path.join(data_dir, 'train.csv')
+        dataset_args['rvf10k_valid_csv'] = os.path.join(data_dir, 'valid.csv')
+        dataset_args['rvf10k_root_dir'] = data_dir
+    elif dataset_mode == '140k':
+        dataset_args['realfake140k_train_csv'] = os.path.join(data_dir, 'train.csv')
+        dataset_args['realfake140k_valid_csv'] = os.path.join(data_dir, 'valid.csv')
+        dataset_args['realfake140k_test_csv'] = os.path.join(data_dir, 'test.csv')
+        dataset_args['realfake140k_root_dir'] = data_dir
+    elif dataset_mode == '200k':
+        dataset_args['realfake200k_train_csv'] = os.path.join(data_dir, 'train_labels.csv')
+        dataset_args['realfake200k_val_csv'] = os.path.join(data_dir, 'val_labels.csv')
+        dataset_args['realfake200k_test_csv'] = os.path.join(data_dir, 'test_labels.csv')
+        dataset_args['realfake200k_root_dir'] = data_dir
+    elif dataset_mode == '190k':
+        dataset_args['realfake190k_root_dir'] = data_dir
+
+    dataset = Dataset_selector(**dataset_args)
 
     # Use DistributedSampler for train_loader
     train_sampler = DistributedSampler(dataset.loader_train.dataset, num_replicas=world_size, rank=rank, shuffle=True)
@@ -245,31 +262,32 @@ def main():
         fig, axes = plt.subplots(2, 5, figsize=(15, 8))
         axes = axes.ravel()
 
-        with torch.no_grad():
-            for i, idx in enumerate(random_indices):
-                row = val_data.iloc[idx]
-                img_name = row[img_column]
-                label = row['label']
+        for i, idx in enumerate(random_indices):
+            row = val_data.iloc[idx]
+            img_name = row[img_column]
+            label = row['label']
 
-                if dataset_mode == '140k':
-                    img_path = os.path.join(data_dir, img_name)
-                elif dataset_mode in ['190k', '200k']:
-                    subfolder = 'Real' if label == 1 else 'Fake' if dataset_mode == '190k' else 'ai_images'
-                    if dataset_mode == '190k':
-                        split = 'Test' if row['filename'].startswith('Test') else 'Validation'
-                        img_path = os.path.join(data_dir, split, subfolder, img_name)
-                    else:
-                        img_path = os.path.join(data_dir, 'my_real_vs_ai_dataset', subfolder, img_name)
+            if dataset_mode == '140k':
+                img_path = os.path.join(data_dir, img_name)
+            elif dataset_mode in ['190k', '200k']:
+                subfolder = 'Real' if label == 1 else 'Fake' if dataset_mode == '190k' else 'ai_images'
+                if dataset_mode == '190k':
+                    split = 'Test' if row['filename'].startswith('Test') else 'Validation'
+                    img_path = os.path.join(data_dir, split, subfolder, img_name)
                 else:
-                    img_path = os.path.join(data_dir, img_name)
+                    img_path = os.path.join(data_dir, 'my_real_vs_ai_dataset', subfolder, img_name)
+            else:
+                img_path = os.path.join(data_dir, img_name)
 
-                if not os.path.exists(img_path):
-                    print(f"Warning: Image not found: {img_path}")
-                    axes[i].set_title("Image not found")
-                    axes[i].axis('off')
-                    continue
-                image = Image.open(img_path).convert('RGB')
-                image_transformed = transform_test(image).unsqueeze(0).to(device)
+            if not os.path.exists(img_path):
+                print(f'Warning: Image not found: {img_path}')
+                axes[i].set_title("Image not found")
+                axes[i].axis('off')
+                continue
+                
+            image = Image.open(img_path).convert('RGB')
+            image_transformed = transform_test(image).unsqueeze(0).to(device)
+            with torch.no_grad():
                 with torch.amp.autocast('cuda', enabled=device.type.startswith('cuda')):
                     output = model(image_transformed).squeeze(1)
                 prob = torch.sigmoid(output).item()
@@ -278,7 +296,7 @@ def main():
                 axes[i].imshow(image)
                 axes[i].set_title(f'True: {true_label}\nPred: {predicted_label}', fontsize=10)
                 axes[i].axis('off')
-                print(f"Image: {img_path}, True Label: {true_label}, Predicted: {predicted_label}")
+                print(f'Image: {img_path}, True Label: {true_label}, Predicted Label: {predicted_label}')
 
         plt.tight_layout()
         file_path = os.path.join(teacher_dir, 'test_samples.png')
@@ -289,10 +307,10 @@ def main():
         for param in model.module.parameters():
             param.requires_grad = True
         flops, params = get_model_complexity_info(model.module, (3, img_height, img_width), as_strings=True, print_per_layer_stat=True)
-        print('FLOPs:', flops)
-        print('Parameters:', params)
+        print(f'FLOPs: {flops}')
+        print(f'Parameters: {params}')
 
-    # Clean up DDP
+    # Cleanup
     cleanup_ddp()
 
 if __name__ == "__main__":
