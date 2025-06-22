@@ -77,9 +77,7 @@ def train(rank, world_size, args):
         raise FileNotFoundError(f"Directory {data_dir} not found!")
     if rank == 0 and not os.path.exists(teacher_dir):
         os.makedirs(teacher_dir)
-
-    # Initialize dataset
-    num_workers = min(2, os.cpu_count() // world_size)
+        
     if dataset_mode == 'hardfake':
         dataset = Dataset_selector(
             dataset_mode='hardfake',
@@ -87,7 +85,7 @@ def train(rank, world_size, args):
             hardfake_root_dir=data_dir,
             train_batch_size=batch_size,
             eval_batch_size=batch_size,
-            num_workers=num_workers,
+            num_workers=4,
             pin_memory=True,
             ddp=True
         )
@@ -99,7 +97,7 @@ def train(rank, world_size, args):
             rvf10k_root_dir=data_dir,
             train_batch_size=batch_size,
             eval_batch_size=batch_size,
-            num_workers=num_workers,
+            num_workers=4,
             pin_memory=True,
             ddp=True
         )
@@ -112,7 +110,7 @@ def train(rank, world_size, args):
             realfake140k_root_dir=data_dir,
             train_batch_size=batch_size,
             eval_batch_size=batch_size,
-            num_workers=num_workers,
+            num_workers=4,
             pin_memory=True,
             ddp=True
         )
@@ -125,7 +123,7 @@ def train(rank, world_size, args):
             realfake200k_root_dir=data_dir,
             train_batch_size=batch_size,
             eval_batch_size=batch_size,
-            num_workers=num_workers,
+            num_workers=4,
             pin_memory=True,
             ddp=True
         )
@@ -135,7 +133,7 @@ def train(rank, world_size, args):
             realfake190k_root_dir=data_dir,
             train_batch_size=batch_size,
             eval_batch_size=batch_size,
-            num_workers=num_workers,
+            num_workers=4,
             pin_memory=True,
             ddp=True
         )
