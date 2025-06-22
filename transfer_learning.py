@@ -3,7 +3,7 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, DistributedSampler
+from torch.utils.data import DataLoader
 from torchvision import models
 from torch.amp import autocast, GradScaler
 from PIL import Image
@@ -13,18 +13,6 @@ import matplotlib.pyplot as plt
 from IPython.display import Image as IPImage, display
 from ptflops import get_model_complexity_info
 from data.dataset import Dataset_selector
-import torch.distributed as dist
-import torch.multiprocessing as mp
-
-def setup(rank, world_size):
-    """Initialize the distributed environment."""
-    os.environ['MASTER_ADDR'] = 'localhost'  
-    os.environ['MASTER_PORT'] = '12355'      
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
-
-def cleanup():
-    """Destroy the distributed environment."""
-    dist.destroy_process_group()
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Transfer learning with ResNet50 for fake vs real face classification.')
@@ -44,13 +32,10 @@ def parse_args():
                         help='Number of training epochs')
     parser.add_argument('--lr', type=float, default=0.0001,
                         help='Learning rate for the optimizer')
-    parser.add_argument('--world_size', type=int, default=torch.cuda.device_count(),
-                        help='Number of GPUs to use (default: all available GPUs)')
     return parser.parse_args()
 
-def main(rank, world_size, args):
-    # Initialize distributed environment
-    setup(rank, world_size)
+if __name__ == "__main__":
+    args = parse_args()
 
     os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
     torch.backends.cudnn.benchmark = True
@@ -64,15 +49,18 @@ def main(rank, world_size, args):
     batch_size = args.batch_size
     epochs = args.epochs
     lr = args.lr
-    device = torch.device(f'cuda:{rank}')
 
-    if rank == 0:  
-        if not os.path.exists(data_dir):
-            raise FileNotFoundError(f"Directory {data_dir} not found!")
-        if not os.path.exists(teacher_dir):
-            os.makedirs(teacher_dir)
+    # Check for multiple GPUs
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    num_gpus = torch.cuda.device_count()
+    print(f"Using {num_gpus} GPU(s)")
 
-    # Initialize dataset with DistributedSampler
+    if not os.path.exists(data_dir):
+        raise FileNotFoundError(f"Directory {data_dir} not found!")
+    if not os.path.exists(teacher_dir):
+        os.makedirs(teacher_dir)
+
+    # Initialize dataset
     if dataset_mode == 'hardfake':
         dataset = Dataset_selector(
             dataset_mode='hardfake',
@@ -80,9 +68,9 @@ def main(rank, world_size, args):
             hardfake_root_dir=data_dir,
             train_batch_size=batch_size,
             eval_batch_size=batch_size,
-            num_workers=4,
+            num_workers=4 * num_gpus,
             pin_memory=True,
-            ddp=True  
+            ddp=False
         )
     elif dataset_mode == 'rvf10k':
         dataset = Dataset_selector(
@@ -92,9 +80,9 @@ def main(rank, world_size, args):
             rvf10k_root_dir=data_dir,
             train_batch_size=batch_size,
             eval_batch_size=batch_size,
-            num_workers=4,
+            num_workers=4 * num_gpus,
             pin_memory=True,
-            ddp=True
+            ddp=False
         )
     elif dataset_mode == '140k':
         dataset = Dataset_selector(
@@ -105,9 +93,9 @@ def main(rank, world_size, args):
             realfake140k_root_dir=data_dir,
             train_batch_size=batch_size,
             eval_batch_size=batch_size,
-            num_workers=4,
+            num_workers=4 * num_gpus,
             pin_memory=True,
-            ddp=True
+            ddp=False
         )
     elif dataset_mode == '200k':
         dataset = Dataset_selector(
@@ -118,9 +106,9 @@ def main(rank, world_size, args):
             realfake200k_root_dir=data_dir,
             train_batch_size=batch_size,
             eval_batch_size=batch_size,
-            num_workers=4,
+            num_workers=4 * num_gpus,
             pin_memory=True,
-            ddp=True
+            ddp=False
         )
     elif dataset_mode == '190k':
         dataset = Dataset_selector(
@@ -128,42 +116,38 @@ def main(rank, world_size, args):
             realfake190k_root_dir=data_dir,
             train_batch_size=batch_size,
             eval_batch_size=batch_size,
-            num_workers=4,
+            num_workers=4 * num_gpus,
             pin_memory=True,
-            ddp=True
+            ddp=False
         )
 
-    # Use DistributedSampler for training DataLoader
-    train_sampler = DistributedSampler(dataset.loader_train.dataset, num_replicas=world_size, rank=rank)
-    train_loader = DataLoader(
-        dataset.loader_train.dataset,
-        batch_size=batch_size,
-        sampler=train_sampler,
-        num_workers=4,
-        pin_memory=True
-    )
+    train_loader = dataset.loader_train
     val_loader = dataset.loader_val
     test_loader = dataset.loader_test
 
+    # Initialize model
     model = models.resnet50(weights='IMAGENET1K_V1')
     num_ftrs = model.fc.in_features
     model.fc = nn.Linear(num_ftrs, 1)
+    
+    # Wrap model with DataParallel for multi-GPU
+    if num_gpus > 1:
+        model = nn.DataParallel(model)
+        print("Model wrapped with DataParallel for multi-GPU training")
     model = model.to(device)
 
-    # Wrap model with DDP
-    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[rank])
-
+    # Freeze layers
     for param in model.parameters():
         param.requires_grad = False
-    for param in model.module.layer4.parameters():
+    for param in model.module.layer4.parameters() if num_gpus > 1 else model.layer4.parameters():
         param.requires_grad = True
-    for param in model.module.fc.parameters():
+    for param in model.module.fc.parameters() if num_gpus > 1 else model.fc.parameters():
         param.requires_grad = True
 
     criterion = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam([
-        {'params': model.module.layer4.parameters(), 'lr': 1e-5},
-        {'params': model.module.fc.parameters(), 'lr': lr}
+        {'params': model.module.layer4.parameters() if num_gpus > 1 else model.layer4.parameters(), 'lr': 1e-5},
+        {'params': model.module.fc.parameters() if num_gpus > 1 else model.fc.parameters(), 'lr': lr}
     ], weight_decay=1e-4)
 
     scaler = torch.amp.GradScaler('cuda') if device.type == 'cuda' else None
@@ -176,7 +160,6 @@ def main(rank, world_size, args):
 
     for epoch in range(epochs):
         model.train()
-        train_sampler.set_epoch(epoch) 
         running_loss = 0.0
         correct_train = 0
         total_train = 0
@@ -197,22 +180,14 @@ def main(rank, world_size, args):
                 loss.backward()
                 optimizer.step()
 
-            running_loss += loss.item() * images.size(0)
+            running_loss += loss.item()
             preds = (torch.sigmoid(outputs) > 0.5).float()
             correct_train += (preds == labels).sum().item()
             total_train += labels.size(0)
 
-        running_loss_tensor = torch.tensor(running_loss).to(device)
-        correct_train_tensor = torch.tensor(correct_train).to(device)
-        total_train_tensor = torch.tensor(total_train).to(device)
-        dist.all_reduce(running_loss_tensor, op=dist.ReduceOp.SUM)
-        dist.all_reduce(correct_train_tensor, op=dist.ReduceOp.SUM)
-        dist.all_reduce(total_train_tensor, op=dist.ReduceOp.SUM)
-
-        train_loss = running_loss_tensor.item() / total_train_tensor.item()
-        train_accuracy = 100 * correct_train_tensor.item() / total_train_tensor.item()
-        if rank == 0:
-            print(f'Epoch {epoch+1}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%')
+        train_loss = running_loss / len(train_loader)
+        train_accuracy = 100 * correct_train / total_train
+        print(f'Epoch {epoch+1}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%')
 
         model.eval()
         val_loss = 0.0
@@ -225,31 +200,24 @@ def main(rank, world_size, args):
                 with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
                     outputs = model(images).squeeze(1)
                     loss = criterion(outputs, labels)
-                val_loss += loss.item() * images.size(0)
+                val_loss += loss.item()
                 preds = (torch.sigmoid(outputs) > 0.5).float()
                 correct_val += (preds == labels).sum().item()
                 total_val += labels.size(0)
 
-        val_loss_tensor = torch.tensor(val_loss).to(device)
-        correct_val_tensor = torch.tensor(correct_val).to(device)
-        total_val_tensor = torch.tensor(total_val).to(device)
-        dist.all_reduce(val_loss_tensor, op=dist.ReduceOp.SUM)
-        dist.all_reduce(correct_val_tensor, op=dist.ReduceOp.SUM)
-        dist.all_reduce(total_val_tensor, op=dist.ReduceOp.SUM)
+        val_loss = val_loss / len(val_loader)
+        val_accuracy = 100 * correct_val / total_val
+        print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%')
 
-        val_loss = val_loss_tensor.item() / total_val_tensor.item()
-        val_accuracy = 100 * correct_val_tensor.item() / total_val_tensor.item()
-        if rank == 0:
-            print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%')
+        if val_accuracy > best_val_acc:
+            best_val_acc = val_accuracy
+            state_dict = model.module.state_dict() if num_gpus > 1 else model.state_dict()
+            torch.save(state_dict, best_model_path)
+            print(f'Saved best model with validation accuracy: {val_accuracy:.2f}% at epoch {epoch+1}')
 
-            if val_accuracy > best_val_acc:
-                best_val_acc = val_accuracy
-                torch.save(model.module.state_dict(), best_model_path)
-                print(f'Saved best model with validation accuracy: {val_accuracy:.2f}% at epoch {epoch+1}')
-
-    if rank == 0:
-        torch.save(model.module.state_dict(), os.path.join(teacher_dir, 'teacher_model_final.pth'))
-        print(f'Saved final model at epoch {epochs}')
+    state_dict = model.module.state_dict() if num_gpus > 1 else model.state_dict()
+    torch.save(state_dict, os.path.join(teacher_dir, 'teacher_model_final.pth'))
+    print(f'Saved final model at epoch {epochs}')
 
     model.eval()
     test_loss = 0.0
@@ -262,76 +230,65 @@ def main(rank, world_size, args):
             with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
                 outputs = model(images).squeeze(1)
                 loss = criterion(outputs, labels)
-            test_loss += loss.item() * images.size(0)
+            test_loss += loss.item()
             preds = (torch.sigmoid(outputs) > 0.5).float()
             correct += (preds == labels).sum().item()
             total += labels.size(0)
+    test_loss = test_loss / len(test_loader)
+    test_accuracy = 100 * correct / total
+    print(f'Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.2f}%')
 
-    test_loss_tensor = torch.tensor(test_loss).to(device)
-    correct_test_tensor = torch.tensor(correct).to(device)
-    total_test_tensor = torch.tensor(total).to(device)
-    dist.all_reduce(test_loss_tensor, op=dist.ReduceOp.SUM)
-    dist.all_reduce(correct_test_tensor, op=dist.ReduceOp.SUM)
-    dist.all_reduce(total_test_tensor, op=dist.ReduceOp.SUM)
+    val_data = dataset.loader_test.dataset.data
+    transform_test = dataset.loader_test.dataset.transform
+    img_column = 'filename' if dataset_mode in ['190k', '200k'] else 'path' if dataset_mode == '140k' else 'images_id'
 
-    test_loss = test_loss_tensor.item() / total_test_tensor.item()
-    test_accuracy = 100 * correct_test_tensor.item() / total_test_tensor.item()
-    if rank == 0:
-        print(f'Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.2f}%')
+    random_indices = random.sample(range(len(val_data)), min(10, len(val_data)))
+    fig, axes = plt.subplots(2, 5, figsize=(15, 8))
+    axes = axes.ravel()
 
-    if rank == 0:
-        val_data = dataset.loader_test.dataset.data
-        transform_test = dataset.loader_test.dataset.transform
-        img_column = 'filename' if dataset_mode in ['190k', '200k'] else 'path' if dataset_mode == '140k' else 'images_id'
+    with torch.no_grad():
+        for i, idx in enumerate(random_indices):
+            row = val_data.iloc[idx]
+            img_name = row[img_column]
+            label = row['label']
 
-        random_indices = random.sample(range(len(val_data)), min(10, len(val_data)))
-        fig, axes = plt.subplots(2, 5, figsize=(15, 8))
-        axes = axes.ravel()
-
-        with torch.no_grad():
-            for i, idx in enumerate(random_indices):
-                row = val_data.iloc[idx]
-                img_name = row[img_column]
-                label = row['label']
-
-                if dataset_mode == '140k':
-                    img_path = os.path.join(data_dir, img_name)
-                elif dataset_mode in ['190k', '200k']:
-                    subfolder = 'Real' if label == 1 else 'Fake' if dataset_mode == '190k' else 'ai_images'
-                    if dataset_mode == '190k':
-                        split = 'Test' if row['filename'].startswith('Test') else 'Validation'
-                        img_path = os.path.join(data_dir, split, subfolder, img_name)
-                    else:
-                        img_path = os.path.join(data_dir, 'my_real_vs_ai_dataset', subfolder, img_name)
+            if dataset_mode == '140k':
+                img_path = os.path.join(data_dir, img_name)
+            elif dataset_mode in ['190k', '200k']:
+                subfolder = 'Real' if label == 1 else 'Fake' if dataset_mode == '190k' else 'ai_images'
+                if dataset_mode == '190k':
+                    split = 'Test' if row['filename'].startswith('Test') else 'Validation'
+                    img_path = os.path.join(data_dir, split, subfolder, img_name)
                 else:
-                    img_path = os.path.join(data_dir, img_name)
+                    img_path = os.path.join(data_dir, 'my_real_vs_ai_dataset', subfolder, img_name)
+            else:
+                img_path = os.path.join(data_dir, img_name)
 
-                if not os.path.exists(img_path):
-                    print(f"Warning: Image not found: {img_path}")
-                    axes[i].set_title("Image not found")
-                    axes[i].axis('off')
-                    continue
-                image = Image.open(img_path).convert('RGB')
-                image_transformed = transform_test(image).unsqueeze(0).to(device)
-                with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
-                    output = model(image_transformed).squeeze(1)
-                prob = torch.sigmoid(output).item()
-                predicted_label = 'real' if prob > 0.5 else 'fake'
-                true_label = 'real' if label == 1 else 'fake'
-                axes[i].imshow(image)
-                axes[i].set_title(f'True: {true_label}\nPred: {predicted_label}', fontsize=10)
+            if not os.path.exists(img_path):
+                print(f"Warning: Image not found: {img_path}")
+                axes[i].set_title("Image not found")
                 axes[i].axis('off')
-                print(f"Image: {img_path}, True Label: {true_label}, Predicted: {predicted_label}")
+                continue
+            image = Image.open(img_path).convert('RGB')
+            image_transformed = transform_test(image).unsqueeze(0).to(device)
+            with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
+                output = model(image_transformed).squeeze(1)
+            prob = torch.sigmoid(output).item()
+            predicted_label = 'real' if prob > 0.5 else 'fake'
+            true_label = 'real' if label == 1 else 'fake'
+            axes[i].imshow(image)
+            axes[i].set_title(f'True: {true_label}\nPred: {predicted_label}', fontsize=10)
+            axes[i].axis('off')
+            print(f"Image: {img_path}, True Label: {true_label}, Predicted: {predicted_label}")
 
-        plt.tight_layout()
-        file_path = os.path.join(teacher_dir, 'test_samples.png')
-        plt.savefig(file_path)
-        display(IPImage(filename=file_path))
+    plt.tight_layout()
+    file_path = os.path.join(teacher_dir, 'test_samples.png')
+    plt.savefig(file_path)
+    display(IPImage(filename=file_path))
 
-        for param in model.module.parameters():
-            param.requires_grad = True
-        flops, params = get_model_complexity_info(model.module, (3, img_height, img_width), as_strings=True, print_per_layer_stat=True)
-        print('FLOPs:', flops)
-        print('Parameters:', params)
-
-    cleanup()
+    model_for_flops = model.module if num_gpus > 1 else model
+    for param in model_for_flops.parameters():
+        param.requires_grad = True
+    flops, params = get_model_complexity_info(model_for_flops, (3, img_height, img_width), as_strings=True, print_per_layer_stat=True)
+    print('FLOPs:', flops)
+    print('Parameters:', params)
