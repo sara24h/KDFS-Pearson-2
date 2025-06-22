@@ -46,7 +46,8 @@ def setup(rank, world_size):
     torch.cuda.set_device(rank)
 
 def cleanup():
-    dist.destroy_process_group()
+    if dist.is_initialized():
+        dist.destroy_process_group()
 
 def reduce_tensor(tensor, world_size):
     dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
@@ -78,7 +79,7 @@ def train(rank, world_size, args):
         os.makedirs(teacher_dir)
 
     # Initialize dataset
-    num_workers = min(4, os.cpu_count() // world_size)
+    num_workers = min(2, os.cpu_count() // world_size)
     if dataset_mode == 'hardfake':
         dataset = Dataset_selector(
             dataset_mode='hardfake',
@@ -148,7 +149,7 @@ def train(rank, world_size, args):
     num_ftrs = model.fc.in_features
     model.fc = nn.Linear(num_ftrs, 1)
     model = model.to(device)
-    model = DDP(model, device_ids=[rank])
+    model = DDP(model, device_ids=[rank], find_unused_parameters=True)
 
     # Freeze layers
     for param in model.parameters():
@@ -180,7 +181,7 @@ def train(rank, world_size, args):
         for images, labels in train_loader:
             images = images.to(device)
             labels = labels.to(device).float()
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)
 
             with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
                 outputs = model(images).squeeze(1)
