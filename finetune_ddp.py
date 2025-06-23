@@ -11,7 +11,14 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from utils import utils, loss, meter, scheduler
 from data.dataset import Dataset_selector
-from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k, ResNet_50_sparse_140k, ResNet_50_sparse_200k, ResNet_50_sparse_190k
+from model.student.ResNet_sparse import (
+    ResNet_50_sparse_hardfakevsreal,
+    ResNet_50_sparse_rvf10k,
+    ResNet_50_sparse_140k,
+    ResNet_50_sparse_200k,
+    ResNet_50_sparse_190k,
+    ResNet_50_sparse_330k  # اضافه شده برای 330k
+)
 
 class FinetuneDDP:
     def __init__(self, args):
@@ -29,6 +36,8 @@ class FinetuneDDP:
             self.dataset_type = "200k"
         elif self.dataset_mode == "190k":
             self.dataset_type = "190k"
+        elif self.dataset_mode == "330k":
+            self.dataset_type = "330k"  # اضافه شده برای 330k
         else:
             raise ValueError(f"Unknown dataset_mode: {self.dataset_mode}")
         self.num_workers = args.num_workers
@@ -82,11 +91,11 @@ class FinetuneDDP:
         os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
         os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
         torch.use_deterministic_algorithms(True)
-        self.seed = self.seed + self.rank
+        self.seed += self.rank
         random.seed(self.seed)
-        np.random.seed(self.seed)
+        np.random.seed(self.seed)  # اصلاح self.seed_ به self.seed
         torch.manual_seed(self.seed)
-        os.environ["PYTHONHASHSEED"] = str(self.seed)
+        os.environ["PYTHONHASHSEED"] = str(self.seed)  # اصلاح PYTHONPATH به PYTHONHASHSEED
         if torch.cuda.is_available():
             torch.cuda.manual_seed(self.seed)
             torch.cuda.manual_seed_all(self.seed)
@@ -169,6 +178,17 @@ class FinetuneDDP:
                 pin_memory=self.pin_memory,
                 ddp=True
             )
+        elif self.dataset_mode == '330k':
+            realfake330k_root_dir = self.args.realfake330k_root_dir
+            dataset = Dataset_selector(
+                dataset_mode='330k',
+                realfake330k_root_dir=realfake330k_root_dir,
+                train_batch_size=self.finetune_train_batch_size,
+                eval_batch_size=self.finetune_eval_batch_size,
+                num_workers=self.num_workers,
+                pin_memory=self.pin_memory,
+                ddp=True
+            )
         else:
             raise ValueError(f"Unknown dataset_mode: {self.dataset_mode}")
 
@@ -195,6 +215,8 @@ class FinetuneDDP:
             self.student = ResNet_50_sparse_200k()
         elif self.dataset_mode == "190k":
             self.student = ResNet_50_sparse_190k()
+        elif self.dataset_mode == "330k":
+            self.student = ResNet_50_sparse_330k()
         else:
             raise ValueError(f"Unknown dataset_mode: {self.dataset_mode}")
         ckpt_student = torch.load(self.finetune_student_ckpt_path, map_location="cpu", weights_only=True)
