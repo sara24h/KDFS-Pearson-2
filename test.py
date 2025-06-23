@@ -19,7 +19,8 @@ from model.student.ResNet_sparse import (
     ResNet_50_sparse_rvf10k,
     ResNet_50_sparse_140k,
     ResNet_50_sparse_200k,
-    ResNet_50_sparse_190k  # اضافه شده برای 190k
+    ResNet_50_sparse_190k,
+    ResNet_50_sparse_330k  # اضافه شده برای 330k
 )
 
 class FaceDataset(Dataset):
@@ -37,7 +38,7 @@ class FaceDataset(Dataset):
         img_name = os.path.join(self.root_dir, self.data[self.img_column].iloc[idx])
         if not os.path.exists(img_name):
             print(f"Warning: Image not found: {img_name}")
-            image_size = 256 if any(mode in self.root_dir for mode in ['140k', '200k', '190k']) else 300
+            image_size = 256 if any(mode in self.root_dir for mode in ['140k', '200k', '190k', '330k']) else 300
             image = Image.new('RGB', (image_size, image_size), color='black')
             label = self.label_map[self.data['label'].iloc[idx]]
             if self.transform:
@@ -52,7 +53,7 @@ class FaceDataset(Dataset):
 class Dataset_selector(Dataset):
     def __init__(
         self,
-        dataset_mode,  # 'hardfake', 'rvf10k', '140k', '200k', '190k'
+        dataset_mode,  # 'hardfake', 'rvf10k', '140k', '200k', '190k', '330k'
         hardfake_csv_file=None,
         hardfake_root_dir=None,
         rvf10k_train_csv=None,
@@ -66,20 +67,21 @@ class Dataset_selector(Dataset):
         realfake200k_valid_csv=None,
         realfake200k_test_csv=None,
         realfake200k_root_dir=None,
-        realfake190k_root_dir=None,  # اضافه شده برای 190k
+        realfake190k_root_dir=None,
+        realfake330k_root_dir=None,  # اضافه شده برای 330k
         train_batch_size=32,
         eval_batch_size=32,
         num_workers=8,
         pin_memory=True,
         ddp=False,
     ):
-        if dataset_mode not in ['hardfake', 'rvf10k', '140k', '200k', '190k']:
-            raise ValueError("dataset_mode must be 'hardfake', 'rvf10k', '140k', '200k', or '190k'")
+        if dataset_mode not in ['hardfake', 'rvf10k', '140k', '200k', '190k', '330k']:
+            raise ValueError("dataset_mode must be 'hardfake', 'rvf10k', '140k', '200k', '190k', or '330k'")
 
         self.dataset_mode = dataset_mode
 
         # Define image size based on dataset_mode
-        image_size = (256, 256) if dataset_mode in ['rvf10k', '140k', '200k', '190k'] else (300, 300)
+        image_size = (256, 256) if dataset_mode in ['rvf10k', '140k', '200k', '190k', '330k'] else (300, 300)
 
         # Define mean and std based on dataset_mode
         if dataset_mode == 'hardfake':
@@ -91,7 +93,7 @@ class Dataset_selector(Dataset):
         elif dataset_mode == '140k':
             mean = (0.5207, 0.4258, 0.3806)
             std = (0.2490, 0.2239, 0.2212)
-        else:  # dataset_mode == '200k' or '190k'
+        else:  # dataset_mode == '200k', '190k', or '330k'
             mean = (0.5207, 0.4258, 0.3806)
             std = (0.2490, 0.2239, 0.2212)
 
@@ -202,19 +204,15 @@ class Dataset_selector(Dataset):
                 raise ValueError("realfake190k_root_dir must be provided")
             root_dir = realfake190k_root_dir
 
-            # تابع برای ساخت DataFrame از دایرکتوری
             def create_dataframe(split):
                 data = {'images_id': [], 'label': []}
-                # مسیرهای Real و Fake
                 real_path = os.path.join(root_dir, split, 'Real')
                 fake_path = os.path.join(root_dir, split, 'Fake')
                 
-                # جمع‌آوری تصاویر Real
                 for img_path in glob.glob(os.path.join(real_path, 'real_*.jpg')):
                     data['images_id'].append(os.path.relpath(img_path, root_dir))
                     data['label'].append(1)  # Real = 1
                 
-                # جمع‌آوری تصاویر Fake
                 for img_path in glob.glob(os.path.join(fake_path, 'fake_*.jpg')):
                     data['images_id'].append(os.path.relpath(img_path, root_dir))
                     data['label'].append(0)  # Fake = 0
@@ -224,12 +222,41 @@ class Dataset_selector(Dataset):
                     raise ValueError(f"No images found in {split} directory")
                 return df
 
-            # ساخت DataFrame برای train، validation و test
             train_data = create_dataframe('Train')
             val_data = create_dataframe('Validation')
             test_data = create_dataframe('Test')
 
-            # مخلوط کردن داده‌ها
+            train_data = train_data.sample(frac=1, random_state=3407).reset_index(drop=True)
+            val_data = val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
+            test_data = test_data.sample(frac=1, random_state=3407).reset_index(drop=True)
+
+        elif dataset_mode == '330k':
+            if not realfake330k_root_dir:
+                raise ValueError("realfake330k_root_dir must be provided")
+            root_dir = realfake330k_root_dir
+
+            def create_dataframe(split):
+                data = {'images_id': [], 'label': []}
+                real_path = os.path.join(root_dir, split, 'Real')
+                fake_path = os.path.join(root_dir, split, 'Fake')
+                
+                for img_path in glob.glob(os.path.join(real_path, 'real_*.jpg')):
+                    data['images_id'].append(os.path.relpath(img_path, root_dir))
+                    data['label'].append(1)  # Real = 1
+                
+                for img_path in glob.glob(os.path.join(fake_path, 'fake_*.jpg')):
+                    data['images_id'].append(os.path.relpath(img_path, root_dir))
+                    data['label'].append(0)  # Fake = 0
+                
+                df = pd.DataFrame(data)
+                if df.empty:
+                    raise ValueError(f"No images found in {split} directory")
+                return df
+
+            train_data = create_dataframe('Train')
+            val_data = create_dataframe('Validation')
+            test_data = create_dataframe('Test')
+
             train_data = train_data.sample(frac=1, random_state=3407).reset_index(drop=True)
             val_data = val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
             test_data = test_data.sample(frac=1, random_state=3407).reset_index(drop=True)
@@ -336,7 +363,7 @@ class Trainer:
         self.device = args.device
         self.test_batch_size = args.test_batch_size
         self.sparsed_student_ckpt_path = args.sparsed_student_ckpt_path
-        self.dataset_mode = args.dataset_mode  # 'hardfake', 'rvf10k', '140k', '200k', '190k'
+        self.dataset_mode = args.dataset_mode  # 'hardfake', 'rvf10k', '140k', '200k', '190k', '330k'
 
         # Verify CUDA availability
         if self.device == 'cuda' and not torch.cuda.is_available():
@@ -364,7 +391,9 @@ class Trainer:
                 if not os.path.exists(test_csv):
                     raise FileNotFoundError(f"CSV file not found: {test_csv}")
             elif self.dataset_mode == '190k':
-                # برای 190k نیازی به بررسی فایل CSV نیست، فقط مسیر ریشه بررسی می‌شود
+                if not os.path.exists(self.dataset_dir):
+                    raise FileNotFoundError(f"Dataset directory not found: {self.dataset_dir}")
+            elif self.dataset_mode == '330k':
                 if not os.path.exists(self.dataset_dir):
                     raise FileNotFoundError(f"Dataset directory not found: {self.dataset_dir}")
 
@@ -428,6 +457,16 @@ class Trainer:
                     pin_memory=self.pin_memory,
                     ddp=False
                 )
+            elif self.dataset_mode == '330k':
+                dataset = Dataset_selector(
+                    dataset_mode='330k',
+                    realfake330k_root_dir=self.dataset_dir,
+                    train_batch_size=self.test_batch_size,
+                    eval_batch_size=self.test_batch_size,
+                    num_workers=self.num_workers,
+                    pin_memory=self.pin_memory,
+                    ddp=False
+                )
 
             self.test_loader = dataset.loader_test
             print(f"{self.dataset_mode} test dataset loaded! Total batches: {len(self.test_loader)}")
@@ -449,6 +488,8 @@ class Trainer:
                 self.student = ResNet_50_sparse_200k()
             elif self.dataset_mode == '190k':
                 self.student = ResNet_50_sparse_190k()
+            elif self.dataset_mode == '330k':
+                self.student = ResNet_50_sparse_330k()
 
             # Load checkpoint
             if not os.path.exists(self.sparsed_student_ckpt_path):
