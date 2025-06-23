@@ -44,14 +44,14 @@ def parse_args():
         "--dataset_mode",
         type=str,
         default="hardfake",
-        choices=("hardfake", "rvf10k", "140k", "200k", "190k"),
-        help="Dataset to use: hardfake, rvf10k, 140k, 200k, or 190k",
+        choices=("hardfake", "rvf10k", "140k", "200k", "190k", "330k"),  # Added 330k
+        help="Dataset to use: hardfake, rvf10k, 140k, 200k, 190k, or 330k",
     )
     parser.add_argument(
         "--dataset_dir",
         type=str,
         default="/kaggle/input/hardfakevsrealfaces",
-        help="The dataset path",
+        help="The dataset path (used for hardfake, rvf10k, 140k, 200k)",
     )
     parser.add_argument(
         "--hardfake_csv_file",
@@ -112,6 +112,12 @@ def parse_args():
         type=str,
         default="/kaggle/input/deepfake-and-real-images/Dataset",
         help="The path to the 190k dataset directory (for 190k mode)",
+    )
+    parser.add_argument(
+        "--realfake330k_root_dir",  # New argument for 330k
+        type=str,
+        default="/kaggle/input/realfake330k",
+        help="The path to the 330k dataset directory (for 330k mode)",
     )
     parser.add_argument(
         "--num_workers",
@@ -227,8 +233,6 @@ def parse_args():
         "--weight_decay",
         type=float,
         default=4e-5,
-
-
         help="Weight decay",
     )
     parser.add_argument(
@@ -395,6 +399,9 @@ def validate_args(args):
     elif args.dataset_mode == "190k":
         if not os.path.exists(args.realfake190k_root_dir):
             raise FileNotFoundError(f"190k dataset directory not found: {args.realfake190k_root_dir}")
+    elif args.dataset_mode == "330k":
+        if not os.path.exists(args.realfake330k_root_dir):
+            raise FileNotFoundError(f"330k dataset directory not found: {args.realfake330k_root_dir}")
 
     if args.phase in ["train", "finetune"] and not os.path.exists(args.teacher_ckpt_path):
         raise FileNotFoundError(f"Teacher checkpoint not found: {args.teacher_ckpt_path}")
