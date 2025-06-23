@@ -22,7 +22,7 @@ from model.teacher.ResNet import ResNet_50_hardfakevsreal
 from model.student import ResNet_sparse
 from utils import utils, loss, meter, scheduler
 from train import Train
-from test import Trainer
+from test import Test
 from finetune import Finetune
 from train_ddp import TrainDDP
 from finetune_ddp import FinetuneDDP
@@ -451,7 +451,7 @@ def main():
             finetune = FinetuneDDP(args=args)
             finetune.main()
         elif args.phase == "test":
-            test = Trainer(args=args)
+            test = Test(args=args)
             test.main()
     else:
         if args.phase == "train":
@@ -461,7 +461,7 @@ def main():
             finetune = Finetune(args=args)
             finetune.main()
         elif args.phase == "test":
-            test = Trainer(args=args)
+            test = Test(args=args)
             test.main()
 
 if __name__ == "__main__":
