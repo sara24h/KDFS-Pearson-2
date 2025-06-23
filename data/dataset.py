@@ -106,8 +106,8 @@ class Dataset_selector:
             std = (0.2579, 0.2263, 0.2190)
         elif dataset_mode == '330k':
             # Placeholder mean and std; replace with actual values if known
-            mean = (0.5, 0.5, 0.5)
-            std = (0.25, 0.25, 0.25)
+            mean = (0.4923, 0.4042, 0.3624)
+            std = (0.2446, 0.2198, 0.2141)
 
         # Define data transformations
         transform_train = transforms.Compose([
@@ -279,7 +279,12 @@ class Dataset_selector:
             val_data = create_dataframe('valid')
             test_data = create_dataframe('test')
 
-        # Reset indices
+            # Shuffle dataframes explicitly (similar to code 2 for 140k)
+            train_data = train_data.sample(frac=1, random_state=3407).reset_index(drop=True)
+            val_data = val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
+            test_data = test_data.sample(frac=1, random_state=3407).reset_index(drop=True)
+
+        # Reset indices (already handled for 330k, but kept for consistency)
         train_data = train_data.reset_index(drop=True)
         val_data = val_data.reset_index(drop=True)
         test_data = test_data.reset_index(drop=True)
@@ -304,8 +309,8 @@ class Dataset_selector:
         # Set up DataLoader
         if ddp:
             train_sampler = DistributedSampler(train_dataset, shuffle=True)
-            val_sampler = DistributedSampler(val_dataset, shuffle=False)
-            test_sampler = DistributedSampler(test_dataset, shuffle=False)
+            val_sampler = DistributedSampler(val_dataset, shuffle=True)  # Enable shuffling for validation
+            test_sampler = DistributedSampler(test_dataset, shuffle=True)  # Enable shuffling for test
 
             self.loader_train = DataLoader(
                 train_dataset,
@@ -339,14 +344,14 @@ class Dataset_selector:
             self.loader_val = DataLoader(
                 val_dataset,
                 batch_size=eval_batch_size,
-                shuffle=False,
+                shuffle=True,  # Enable shuffling for validation
                 num_workers=num_workers,
                 pin_memory=pin_memory,
             )
             self.loader_test = DataLoader(
                 test_dataset,
                 batch_size=eval_batch_size,
-                shuffle=False,
+                shuffle=True,  # Enable shuffling for test
                 num_workers=num_workers,
                 pin_memory=pin_memory,
             )
@@ -355,12 +360,13 @@ class Dataset_selector:
         print(f"Number of validation batches: {len(self.loader_val)}")
         print(f"Number of test batches: {len(self.loader_test)}")
 
-        # Check sample batches
+        # Check sample batches with label distribution
         for loader, name in [(self.loader_train, 'train'), (self.loader_val, 'validation'), (self.loader_test, 'test')]:
             try:
                 sample = next(iter(loader))
                 print(f"Sample {name} batch image shape: {sample[0].shape}")
                 print(f"Sample {name} batch labels: {sample[1]}")
+                print(f"{name} batch label distribution: {torch.bincount(sample[1].int())}")
             except Exception as e:
                 print(f"Error loading sample {name} batch: {e}")
 
