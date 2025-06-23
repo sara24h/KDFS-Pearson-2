@@ -116,7 +116,7 @@ def parse_args():
     parser.add_argument(
         "--realfake330k_root_dir",  # New argument for 330k
         type=str,
-        default="/kaggle/input/realfake330k",
+        default="/kaggle/input/deepfake-dataset",
         help="The path to the 330k dataset directory (for 330k mode)",
     )
     parser.add_argument(
