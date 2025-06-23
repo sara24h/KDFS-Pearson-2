@@ -17,8 +17,8 @@ from data.dataset import Dataset_selector
 def parse_args():
     parser = argparse.ArgumentParser(description='Transfer learning with ResNet50 for fake vs real face classification.')
     parser.add_argument('--dataset_mode', type=str, required=True, 
-                        choices=['hardfake', 'rvf10k', '140k', '190k', '200k', '12.9k'],
-                        help='Dataset to use: hardfake, rvf10k, 140k, 190k, 200k, or 12.9k')
+                        choices=['hardfake', 'rvf10k', '140k', '190k', '200k', '12.9k', '330k'],  # Added 330k
+                        help='Dataset to use: hardfake, rvf10k, 140k, 190k, 200k, 12.9k, or 330k')
     parser.add_argument('--data_dir', type=str, required=True,
                         help='Path to the dataset directory containing images and CSV file(s)')
     parser.add_argument('--teacher_dir', type=str, default='teacher_dir',
@@ -45,8 +45,8 @@ if __name__ == "__main__":
     dataset_mode = args.dataset_mode
     data_dir = args.data_dir
     teacher_dir = args.teacher_dir
-    img_height = 256 if dataset_mode in ['rvf10k', '140k', '190k', '200k', '12.9k'] else args.img_height
-    img_width = 256 if dataset_mode in ['rvf10k', '140k', '190k', '200k', '12.9k'] else args.img_width
+    img_height = 256 if dataset_mode in ['rvf10k', '140k', '190k', '200k', '12.9k', '330k'] else args.img_height  # Added 330k
+    img_width = 256 if dataset_mode in ['rvf10k', '140k', '190k', '200k', '12.9k', '330k'] else args.img_width  # Added 330k
     batch_size = args.batch_size
     epochs = args.epochs
     lr = args.lr
@@ -122,6 +122,16 @@ if __name__ == "__main__":
             dataset_mode='12.9k',
             dataset_12_9k_csv_file=os.path.join(data_dir, 'dataset.csv'),
             dataset_12_9k_root_dir=data_dir,
+            train_batch_size=batch_size,
+            eval_batch_size=batch_size,
+            num_workers=4,
+            pin_memory=True,
+            ddp=False
+        )
+    elif dataset_mode == '330k':
+        dataset = Dataset_selector(
+            dataset_mode='330k',
+            realfake330k_root_dir=data_dir,
             train_batch_size=batch_size,
             eval_batch_size=batch_size,
             num_workers=4,
@@ -239,7 +249,7 @@ if __name__ == "__main__":
 
     val_data = dataset.loader_test.dataset.data
     transform_test = dataset.loader_test.dataset.transform
-    img_column = 'filename' if dataset_mode in ['190k', '200k'] else 'path' if dataset_mode in ['140k', '12.9k'] else 'images_id'
+    img_column = 'filename' if dataset_mode in ['190k', '200k', '330k'] else 'path' if dataset_mode in ['140k', '12.9k'] else 'images_id'  # Updated for 330k
 
     random_indices = random.sample(range(len(val_data)), min(10, len(val_data)))
     fig, axes = plt.subplots(2, 5, figsize=(15, 8))
@@ -255,11 +265,14 @@ if __name__ == "__main__":
                 img_path = os.path.join(data_dir, img_name)
             elif dataset_mode == '12.9k':
                 img_path = os.path.join(data_dir, img_name)
-            elif dataset_mode in ['190k', '200k']:
-                subfolder = 'Real' if label == 1 else 'Fake' if dataset_mode == '190k' else 'ai_images'
+            elif dataset_mode in ['190k', '200k', '330k']:
+                subfolder = 'Real' if label == 1 else 'Fake' if dataset_mode in ['190k', '330k'] else 'ai_images'
                 if dataset_mode == '190k':
                     split = 'Test' if row['filename'].startswith('Test') else 'Validation'
-                    img_path = os.path.join(data_dir, split, subfolder, img_name)
+                    img_path = os.path.join(data_dir, split, subfolder, os.path.basename(img_name))
+                elif dataset_mode == '330k':
+                    split = 'test' if row['filename'].startswith('test') else 'valid'
+                    img_path = os.path.join(data_dir, split, subfolder, os.path.basename(img_name))
                 else:
                     img_path = os.path.join(data_dir, 'my_real_vs_ai_dataset', subfolder, img_name)
             else:
