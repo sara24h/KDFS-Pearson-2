@@ -70,19 +70,20 @@ class Dataset_selector:
         realfake190k_root_dir=None,
         dataset_12_9k_csv_file=None,
         dataset_12_9k_root_dir=None,
+        realfake330k_root_dir=None,  
         train_batch_size=32,
         eval_batch_size=32,
         num_workers=8,
         pin_memory=True,
         ddp=False,
     ):
-        if dataset_mode not in ['hardfake', 'rvf10k', '140k', '200k', '190k', '12.9k']:
-            raise ValueError("dataset_mode must be one of 'hardfake', 'rvf10k', '140k', '200k', '190k', or '12.9k'")
+        if dataset_mode not in ['hardfake', 'rvf10k', '140k', '200k', '190k', '12.9k', '330k']:
+            raise ValueError("dataset_mode must be one of 'hardfake', 'rvf10k', '140k', '200k', '190k', '12.9k', or '330k'")
 
         self.dataset_mode = dataset_mode
 
         # Set image size
-        image_size = (256, 256) if dataset_mode in ['rvf10k', '140k', '200k', '190k', '12.9k'] else (300, 300)
+        image_size = (256, 256) if dataset_mode in ['rvf10k', '140k', '200k', '190k', '12.9k', '330k'] else (300, 300)
 
         # Set mean and standard deviation for normalization
         if dataset_mode == 'hardfake':
@@ -103,6 +104,10 @@ class Dataset_selector:
         elif dataset_mode == '12.9k':
             mean = (0.4970, 0.4026, 0.3579)  
             std = (0.2579, 0.2263, 0.2190)
+        elif dataset_mode == '330k':
+            # Placeholder mean and std; replace with actual values if known
+            mean = (0.5, 0.5, 0.5)
+            std = (0.25, 0.25, 0.25)
 
         # Define data transformations
         transform_train = transforms.Compose([
@@ -127,7 +132,7 @@ class Dataset_selector:
         ])
 
         # Select appropriate column for image paths
-        img_column = 'path' if dataset_mode in ['140k', '12.9k'] else 'filename' if dataset_mode in ['200k', '190k'] else 'images_id'
+        img_column = 'path' if dataset_mode in ['140k', '12.9k'] else 'filename' if dataset_mode in ['200k', '190k', '330k'] else 'images_id'
 
         # Load data based on dataset_mode
         if dataset_mode == 'hardfake':
@@ -246,6 +251,33 @@ class Dataset_selector:
             val_data, test_data = train_test_split(
                 temp_data, test_size=0.5, stratify=temp_data['label'], random_state=3407
             )
+
+        elif dataset_mode == '330k':
+            if not realfake330k_root_dir:
+                raise ValueError("realfake330k_root_dir must be provided")
+            root_dir = realfake330k_root_dir
+
+            def create_dataframe(split):
+                data = {'filename': [], 'label': []}
+                real_path = os.path.join(root_dir, split, 'Real')
+                fake_path = os.path.join(root_dir, split, 'Fake')
+                
+                for img_path in glob.glob(os.path.join(real_path, '*.jpg')):
+                    data['filename'].append(os.path.relpath(img_path, root_dir))
+                    data['label'].append(1)  # Real = 1
+                
+                for img_path in glob.glob(os.path.join(fake_path, '*.jpg')):
+                    data['filename'].append(os.path.relpath(img_path, root_dir))
+                    data['label'].append(0)  # Fake = 0
+                
+                df = pd.DataFrame(data)
+                if df.empty:
+                    raise ValueError(f"No images found in {split} directory")
+                return df
+
+            train_data = create_dataframe('train')
+            val_data = create_dataframe('valid')
+            test_data = create_dataframe('test')
 
         # Reset indices
         train_data = train_data.reset_index(drop=True)
@@ -386,6 +418,14 @@ if __name__ == "__main__":
         dataset_mode='12.9k',
         dataset_12_9k_csv_file='/kaggle/input/deepfake-face-images/dataset.csv',
         dataset_12_9k_root_dir='/kaggle/input/deepfake-face-images',
+        train_batch_size=128,
+        eval_batch_size=128,
+        ddp=True,
+    )
+
+    dataset_330k = Dataset_selector(
+        dataset_mode='330k',
+        realfake330k_root_dir='/kaggle/input/deepfake-dataset',  
         train_batch_size=128,
         eval_batch_size=128,
         ddp=True,
