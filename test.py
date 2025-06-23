@@ -9,19 +9,9 @@ from sklearn.model_selection import train_test_split
 import torchvision.transforms as transforms
 from torch.utils.data import Dataset, DataLoader
 import glob
-
 from utils import meter
 from get_flops_and_params import get_flops_and_params
-
-# مدل‌های ResNet فرضی
-from model.student.ResNet_sparse import (
-    ResNet_50_sparse_hardfakevsreal,
-    ResNet_50_sparse_rvf10k,
-    ResNet_50_sparse_140k,
-    ResNet_50_sparse_200k,
-    ResNet_50_sparse_190k,
-    ResNet_50_sparse_330k  # اضافه شده برای 330k
-)
+from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
 
 class FaceDataset(Dataset):
     def __init__(self, data_frame, root_dir, transform=None, img_column='images_id'):
@@ -478,19 +468,7 @@ class Trainer:
         print("==> Building student model..")
         try:
             print(f"Loading sparse student model for dataset mode: {self.dataset_mode}")
-            if self.dataset_mode == 'hardfake':
                 self.student = ResNet_50_sparse_hardfakevsreal()
-            elif self.dataset_mode == 'rvf10k':
-                self.student = ResNet_50_sparse_rvf10k()
-            elif self.dataset_mode == '140k':
-                self.student = ResNet_50_sparse_140k()
-            elif self.dataset_mode == '200k':
-                self.student = ResNet_50_sparse_200k()
-            elif self.dataset_mode == '190k':
-                self.student = ResNet_50_sparse_190k()
-            elif self.dataset_mode == '330k':
-                self.student = ResNet_50_sparse_330k()
-
             # Load checkpoint
             if not os.path.exists(self.sparsed_student_ckpt_path):
                 raise FileNotFoundError(f"Checkpoint file not found: {self.sparsed_student_ckpt_path}")
