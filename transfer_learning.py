@@ -12,7 +12,8 @@ import random
 import matplotlib.pyplot as plt
 from IPython.display import Image as IPImage, display
 from ptflops import get_model_complexity_info
-from data.dataset import Dataset_selector  
+from thop import profile
+from data.dataset import Dataset_selector
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Transfer learning with ResNet50 for fake vs real face classification.')
@@ -33,6 +34,8 @@ def parse_args():
                         help='Number of training epochs')
     parser.add_argument('--lr', type=float, default=0.0001,
                         help='Learning rate for the optimizer')
+    parser.add_argument('--use_dali', action='store_true',
+                        help='Use NVIDIA DALI for data loading')
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -50,6 +53,7 @@ if __name__ == "__main__":
     batch_size = args.batch_size
     epochs = args.epochs
     lr = args.lr
+    use_dali = args.use_dali
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     if not os.path.exists(data_dir):
@@ -64,7 +68,8 @@ if __name__ == "__main__":
         'eval_batch_size': batch_size,
         'num_workers': 4,
         'pin_memory': True,
-        'ddp': False
+        'ddp': False,
+        'use_dali': use_dali
     }
     
     if dataset_mode == 'hardfake':
@@ -143,11 +148,16 @@ if __name__ == "__main__":
         running_loss = 0.0
         correct_train = 0
         total_train = 0
-        for images, labels in train_loader:
-            images = images.to(device)
-            labels = labels.to(device).float()
-            optimizer.zero_grad()
+        for batch in train_loader:
+            if use_dali:
+                images = batch[0]["data"].to(device)
+                labels = batch[0]["label"].to(device).float().squeeze()
+            else:
+                images, labels = batch
+                images = images.to(device)
+                labels = labels.to(device).float()
 
+            optimizer.zero_grad()
             with autocast('cuda', enabled=device.type == 'cuda'):
                 outputs = model(images).squeeze(1)
                 loss = criterion(outputs, labels)
@@ -175,9 +185,15 @@ if __name__ == "__main__":
             correct_val = 0
             total_val = 0
             with torch.no_grad():
-                for images, labels in val_loader:
-                    images = images.to(device)
-                    labels = labels.to(device).float()
+                for batch in val_loader:
+                    if use_dali:
+                        images = batch[0]["data"].to(device)
+                        labels = batch[0]["label"].to(device).float().squeeze()
+                    else:
+                        images, labels = batch
+                        images = images.to(device)
+                        labels = labels.to(device).float()
+
                     with autocast('cuda', enabled=device.type == 'cuda'):
                         outputs = model(images).squeeze(1)
                         loss = criterion(outputs, labels)
@@ -204,9 +220,15 @@ if __name__ == "__main__":
         correct = 0
         total = 0
         with torch.no_grad():
-            for images, labels in test_loader:
-                images = images.to(device)
-                labels = labels.to(device).float()
+            for batch in test_loader:
+                if use_dali:
+                    images = batch[0]["data"].to(device)
+                    labels = batch[0]["label"].to(device).float().squeeze()
+                else:
+                    images, labels = batch
+                    images = images.to(device)
+                    labels = labels.to(device).float()
+
                 with autocast('cuda', enabled=device.type == 'cuda'):
                     outputs = model(images).squeeze(1)
                     loss = criterion(outputs, labels)
@@ -219,9 +241,34 @@ if __name__ == "__main__":
         print(f'Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.2f}%')
 
     if test_loader:
-        val_data = test_loader.dataset.data
-        transform_test = test_loader.dataset.transform
+        # For visualization, use PyTorch dataset to access transforms
+        transform_test = transforms.Compose([
+            transforms.Resize((img_height, img_width)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ])
         img_column = 'filename' if dataset_mode in ['190k', '200k', '330k'] else 'path' if dataset_mode in ['140k', '12.9k'] else 'images_id'
+
+        # Access test data from CSV or directory
+        test_csv = os.path.join(data_dir, 'test.csv') if dataset_mode == '140k' else None
+        if test_csv and os.path.exists(test_csv):
+            val_data = pd.read_csv(test_csv)
+        else:
+            val_data = pd.DataFrame({
+                'filename': [], 'label': [], img_column: [], 'original_path': []
+            })
+            test_path = os.path.join(data_dir, 'test')
+            for label, folder in [(1, 'real'), (0, 'fake')]:
+                folder_path = os.path.join(test_path, folder)
+                if os.path.exists(folder_path):
+                    for img in glob.glob(os.path.join(folder_path, '*.[jJ][pP][gG]')):
+                        rel_path = os.path.relpath(img, data_dir)
+                        val_data = val_data.append({
+                            'filename': rel_path,
+                            img_column: rel_path,
+                            'original_path': rel_path,
+                            'label': label
+                        }, ignore_index=True)
 
         random_indices = random.sample(range(len(val_data)), min(10, len(val_data)))
         fig, axes = plt.subplots(2, 5, figsize=(15, 8))
@@ -233,23 +280,7 @@ if __name__ == "__main__":
                 img_name = row[img_column]
                 label = row['label']
 
-                if dataset_mode == '140k':
-                    img_path = os.path.join(data_dir, img_name)
-                elif dataset_mode == '12.9k':
-                    img_path = os.path.join(data_dir, img_name)
-                elif dataset_mode in ['190k', '200k', '330k']:
-                    subfolder = 'Real' if label == 1 else 'Fake' if dataset_mode in ['190k', '330k'] else 'ai_images'
-                    if dataset_mode == '190k':
-                        split = 'Test' if row['filename'].startswith('Test') else 'Validation'
-                        img_path = os.path.join(data_dir, split, subfolder, os.path.basename(img_name))
-                    elif dataset_mode == '330k':
-                        split = 'test' if row['filename'].startswith('test') else 'valid'
-                        img_path = os.path.join(data_dir, split, subfolder, os.path.basename(img_name))
-                    else:
-                        img_path = os.path.join(data_dir, 'my_real_vs_ai_dataset', subfolder, img_name)
-                else:
-                    img_path = os.path.join(data_dir, img_name)
-
+                img_path = os.path.join(data_dir, img_name)
                 if not os.path.exists(img_path):
                     print(f"Warning: Image not found: {img_path}")
                     axes[i].set_title("Image not found")
@@ -275,5 +306,11 @@ if __name__ == "__main__":
     for param in model.parameters():
         param.requires_grad = True
     flops, params = get_model_complexity_info(model, (3, img_height, img_width), as_strings=True, print_per_layer_stat=True)
-    print('FLOPs:', flops)
-    print('Parameters:', params)
+    print('FLOPs (ptflops):', flops)
+    print('Parameters (ptflops):', params)
+
+    # Additional complexity analysis with thop
+    input = torch.randn(1, 3, img_height, img_width).to(device)
+    macs, params = profile(model, inputs=(input,))
+    print('MACs (thop):', macs)
+    print('Parameters (thop):', params)
