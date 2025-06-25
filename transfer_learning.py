@@ -14,6 +14,7 @@ from IPython.display import Image as IPImage, display
 from ptflops import get_model_complexity_info
 from thop import profile
 from data.dataset import Dataset_selector
+import glob
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Transfer learning with ResNet50 for fake vs real face classification.')
@@ -77,6 +78,7 @@ if __name__ == "__main__":
         dataset_args.update({
             'rvf10k_train_csv': os.path.join(data_dir, 'train.csv'),
             'rvf10k_valid_csv': os.path.join(data_dir, 'valid.csv'),
+            'rvf10k_test_csv': os.path.join(data_dir, 'test.csv'),  # Optional test.csv
             'rvf10k_root_dir': data_dir
         })
     elif dataset_mode == '140k':
@@ -229,7 +231,7 @@ if __name__ == "__main__":
         ])
         img_column = 'filename' if dataset_mode in ['190k', '200k', '330k'] else 'path' if dataset_mode in ['140k', '12.9k'] else 'images_id'
 
-        test_csv = os.path.join(data_dir, 'test.csv') if dataset_mode == '140k' else None
+        test_csv = os.path.join(data_dir, 'test.csv') if dataset_mode in ['rvf10k', '140k'] else None
         if test_csv and os.path.exists(test_csv):
             val_data = pd.read_csv(test_csv)
         else:
