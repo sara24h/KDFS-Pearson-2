@@ -132,7 +132,7 @@ class Dataset_selector:
         ])
 
         # Select appropriate column for image paths
-        img_column = 'path' if dataset_mode in ['140k', '12.9k'] else 'filename' if dataset_mode in ['200k', '190k', '330k'] else 'images_id'
+        img_column = 'path' if dataset_mode in ['rvf10k','140k', '12.9k'] else 'filename' if dataset_mode in ['200k', '190k', '330k'] else 'images_id'
 
         # Load data based on dataset_mode
         if dataset_mode == 'hardfake':
@@ -143,13 +143,13 @@ class Dataset_selector:
 
             def create_image_path(row):
                 folder = 'fake' if row['label'] == 'fake' else 'real'
-                img_name = row['images_id']
+                img_name = row['path']
                 img_name = os.path.basename(img_name)
                 if not img_name.endswith('.jpg'):
                     img_name += '.jpg'
                 return os.path.join(folder, img_name)
 
-            full_data['images_id'] = full_data.apply(create_image_path, axis=1)
+            full_data['path'] = full_data.apply(create_image_path, axis=1)
 
             train_data, temp_data = train_test_split(
                 full_data, test_size=0.3, stratify=full_data['label'], random_state=3407
@@ -167,16 +167,16 @@ class Dataset_selector:
 
             def create_image_path(row, split='train'):
                 folder = 'fake' if row['label'] == 0 else 'real'
-                img_name = row['images_id']
+                img_name = row['path']
                 return os.path.join('rvf10k', split, folder, img_name)
 
-            train_data['images_id'] = train_data.apply(lambda row: create_image_path(row, 'train'), axis=1)
-            valid_data['images_id'] = valid_data.apply(lambda row: create_image_path(row, 'valid'), axis=1)
+            train_data['path'] = train_data.apply(lambda row: create_image_path(row, 'train'), axis=1)
+            valid_data['path'] = valid_data.apply(lambda row: create_image_path(row, 'valid'), axis=1)
 
             # Load test data if test_csv is provided
             if rvf10k_test_csv and os.path.exists(rvf10k_test_csv):
                 test_data = pd.read_csv(rvf10k_test_csv)
-                test_data['images_id'] = test_data.apply(lambda row: create_image_path(row, 'test'), axis=1)
+                test_data['path'] = test_data.apply(lambda row: create_image_path(row, 'test'), axis=1)
             else:
                 # Fallback to splitting valid_data
                 val_data, test_data = train_test_split(
