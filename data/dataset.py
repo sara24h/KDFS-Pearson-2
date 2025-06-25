@@ -95,7 +95,7 @@ class Dataset_selector:
             std = (0.2487, 0.2240, 0.2214)
         elif dataset_mode == '140k':
             mean = (0.5207, 0.4258, 0.3806)
-            std = (0.2490, 0.2239, 0.2212)
+900            std = (0.2490, 0.2239, 0.2212)
         elif dataset_mode == '200k':
             mean = (0.4868, 0.3972, 0.3624)
             std = (0.2296, 0.2066, 0.2009)
@@ -161,14 +161,16 @@ class Dataset_selector:
         elif dataset_mode == 'rvf10k':
             if not rvf10k_train_csv or not rvf10k_valid_csv or not rvf10k_root_dir:
                 raise ValueError("rvf10k_train_csv, rvf10k_valid_csv, and rvf10k_root_dir must be provided")
+            print(f"Loading train CSV from: {rvf10k_train_csv}")
+            print(f"Loading valid CSV from: {rvf10k_valid_csv}")
             train_data = pd.read_csv(rvf10k_train_csv)
             valid_data = pd.read_csv(rvf10k_valid_csv)
             root_dir = rvf10k_root_dir
 
             def create_image_path(row, split='train'):
                 folder = 'fake' if row['label'] == 0 else 'real'
-                img_name = os.path.basename(row['path'])  # فقط نام فایل (مانندل 28609.jpg)
-                return os.path.join('rvf10k', split, folder, img_name)
+                img_name = os.path.basename(row['path'])  # فقط نام فایل (مانند 28609.jpg)
+                return os.path.join('rvf10k', split, folder, img_name)  # مسیر کامل با زیرپوشه rvf10k
 
             train_data['path'] = train_data.apply(lambda row: create_image_path(row, 'train'), axis=1)
             valid_data['path'] = valid_data.apply(lambda row: create_image_path(row, 'valid'), axis=1)
@@ -176,6 +178,14 @@ class Dataset_selector:
             # چاپ مسیرهای نمونه برای دیباگ
             print("Sample train paths:", train_data['path'].head().tolist())
             print("Sample valid paths:", valid_data['path'].head().tolist())
+
+            # بررسی وجود فایل‌های CSV و نمونه تصاویر
+            for path in train_data['path'].head():
+                full_path = os.path.join(root_dir, path)
+                print(f"Checking train image {full_path}: {'Exists' if os.path.exists(full_path) else 'Not Found'}")
+            for path in valid_data['path'].head():
+                full_path = os.path.join(root_dir, path)
+                print(f"Checking valid image {full_path}: {'Exists' if os.path.exists(full_path) else 'Not Found'}")
 
             # Load test data if test_csv is provided
             if rvf10k_test_csv and os.path.exists(rvf10k_test_csv):
@@ -377,8 +387,9 @@ class Dataset_selector:
                 print(f"{name} batch label distribution: {torch.bincount(sample[1].int())}")
             except Exception as e:
                 print(f"Error loading sample {name} batch: {e}")
-    
+
 if __name__ == "__main__":
+
     dataset_hardfake = Dataset_selector(
         dataset_mode='hardfake',
         hardfake_csv_file='/kaggle/input/hardfakevsrealfaces/data.csv',
