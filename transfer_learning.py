@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from torchvision import models
+from torchvision import models, transforms
 from torch.amp import autocast, GradScaler
 from PIL import Image
 import argparse
@@ -34,8 +34,6 @@ def parse_args():
                         help='Number of training epochs')
     parser.add_argument('--lr', type=float, default=0.0001,
                         help='Learning rate for the optimizer')
-    parser.add_argument('--use_dali', action='store_true',
-                        help='Use NVIDIA DALI for data loading')
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -53,7 +51,6 @@ if __name__ == "__main__":
     batch_size = args.batch_size
     epochs = args.epochs
     lr = args.lr
-    use_dali = args.use_dali
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     if not os.path.exists(data_dir):
@@ -61,15 +58,14 @@ if __name__ == "__main__":
     if not os.path.exists(teacher_dir):
         os.makedirs(teacher_dir)
 
-    # Initialize dataset using Dataset_selector
+    # Initialize dataset
     dataset_args = {
         'dataset_mode': dataset_mode,
         'train_batch_size': batch_size,
         'eval_batch_size': batch_size,
         'num_workers': 4,
         'pin_memory': True,
-        'ddp': False,
-        'use_dali': use_dali
+        'ddp': False
     }
     
     if dataset_mode == 'hardfake':
@@ -148,14 +144,9 @@ if __name__ == "__main__":
         running_loss = 0.0
         correct_train = 0
         total_train = 0
-        for batch in train_loader:
-            if use_dali:
-                images = batch[0]["data"].to(device)
-                labels = batch[0]["label"].to(device).float().squeeze()
-            else:
-                images, labels = batch
-                images = images.to(device)
-                labels = labels.to(device).float()
+        for images, labels in train_loader:
+            images = images.to(device)
+            labels = labels.to(device).float()
 
             optimizer.zero_grad()
             with autocast('cuda', enabled=device.type == 'cuda'):
@@ -185,14 +176,9 @@ if __name__ == "__main__":
             correct_val = 0
             total_val = 0
             with torch.no_grad():
-                for batch in val_loader:
-                    if use_dali:
-                        images = batch[0]["data"].to(device)
-                        labels = batch[0]["label"].to(device).float().squeeze()
-                    else:
-                        images, labels = batch
-                        images = images.to(device)
-                        labels = labels.to(device).float()
+                for images, labels in val_loader:
+                    images = images.to(device)
+                    labels = labels.to(device).float()
 
                     with autocast('cuda', enabled=device.type == 'cuda'):
                         outputs = model(images).squeeze(1)
@@ -220,14 +206,9 @@ if __name__ == "__main__":
         correct = 0
         total = 0
         with torch.no_grad():
-            for batch in test_loader:
-                if use_dali:
-                    images = batch[0]["data"].to(device)
-                    labels = batch[0]["label"].to(device).float().squeeze()
-                else:
-                    images, labels = batch
-                    images = images.to(device)
-                    labels = labels.to(device).float()
+            for images, labels in test_loader:
+                images = images.to(device)
+                labels = labels.to(device).float()
 
                 with autocast('cuda', enabled=device.type == 'cuda'):
                     outputs = model(images).squeeze(1)
@@ -241,7 +222,6 @@ if __name__ == "__main__":
         print(f'Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.2f}%')
 
     if test_loader:
-        # For visualization, use PyTorch dataset to access transforms
         transform_test = transforms.Compose([
             transforms.Resize((img_height, img_width)),
             transforms.ToTensor(),
@@ -249,7 +229,6 @@ if __name__ == "__main__":
         ])
         img_column = 'filename' if dataset_mode in ['190k', '200k', '330k'] else 'path' if dataset_mode in ['140k', '12.9k'] else 'images_id'
 
-        # Access test data from CSV or directory
         test_csv = os.path.join(data_dir, 'test.csv') if dataset_mode == '140k' else None
         if test_csv and os.path.exists(test_csv):
             val_data = pd.read_csv(test_csv)
@@ -263,12 +242,12 @@ if __name__ == "__main__":
                 if os.path.exists(folder_path):
                     for img in glob.glob(os.path.join(folder_path, '*.[jJ][pP][gG]')):
                         rel_path = os.path.relpath(img, data_dir)
-                        val_data = val_data.append({
+                        val_data = pd.concat([val_data, pd.DataFrame([{
                             'filename': rel_path,
                             img_column: rel_path,
                             'original_path': rel_path,
                             'label': label
-                        }, ignore_index=True)
+                        }])], ignore_index=True)
 
         random_indices = random.sample(range(len(val_data)), min(10, len(val_data)))
         fig, axes = plt.subplots(2, 5, figsize=(15, 8))
@@ -309,7 +288,6 @@ if __name__ == "__main__":
     print('FLOPs (ptflops):', flops)
     print('Parameters (ptflops):', params)
 
-    # Additional complexity analysis with thop
     input = torch.randn(1, 3, img_height, img_width).to(device)
     macs, params = profile(model, inputs=(input,))
     print('MACs (thop):', macs)
