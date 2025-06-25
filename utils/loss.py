@@ -59,12 +59,12 @@ def compute_active_filters_correlation(filters, m):
     variance = torch.var(active_filters_flat, dim=1)
     
     # Identify filters with zero variance
-    zero_variance_indices = torch.where(variance == 0)[0]
-    if len(zero_variance_indices) > 0:
-        print("The following filters have zero variance:")
-        for idx in zero_variance_indices:
-            filter_weights = active_filters_flat[idx]
-            print(f"Filter at index {active_indices[idx].item()}: values = {filter_weights.tolist()}")
+   # zero_variance_indices = torch.where(variance == 0)[0]
+    #if len(zero_variance_indices) > 0:
+     #   print("The following filters have zero variance:")
+      #  for idx in zero_variance_indices:
+            #filter_weights = active_filters_flat[idx]
+            #print(f"Filter at index {active_indices[idx].item()}: values = {filter_weights.tolist()}")
     
     # Check the number of valid filters (non-zero variance)
     valid_indices = torch.where(variance > 0)[0]
