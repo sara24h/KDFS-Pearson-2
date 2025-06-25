@@ -58,6 +58,7 @@ class Dataset_selector:
         hardfake_root_dir=None,
         rvf10k_train_csv=None,
         rvf10k_valid_csv=None,
+        rvf10k_test_csv=None,  # Added for test.csv support
         rvf10k_root_dir=None,
         realfake140k_train_csv=None,
         realfake140k_valid_csv=None,
@@ -90,8 +91,8 @@ class Dataset_selector:
             mean = (0.5124, 0.4165, 0.3684)
             std = (0.2363, 0.2087, 0.2029)
         elif dataset_mode == 'rvf10k':
-            mean = (0.5212, 0.4260, 0.3811)
-            std = (0.2486, 0.2238, 0.2211)
+            mean = (0.5214, 0.4265, 0.3814)
+            std = (0.2487, 0.2240, 0.2214)
         elif dataset_mode == '140k':
             mean = (0.5207, 0.4258, 0.3806)
             std = (0.2490, 0.2239, 0.2212)
@@ -105,7 +106,6 @@ class Dataset_selector:
             mean = (0.4970, 0.4026, 0.3579)  
             std = (0.2579, 0.2263, 0.2190)
         elif dataset_mode == '330k':
-            # Placeholder mean and std; replace with actual values if known
             mean = (0.4923, 0.4042, 0.3624)
             std = (0.2446, 0.2198, 0.2141)
 
@@ -139,6 +139,7 @@ class Dataset_selector:
             if not hardfake_csv_file or not hardfake_root_dir:
                 raise ValueError("hardfake_csv_file and hardfake_root_dir must be provided")
             full_data = pd.read_csv(hardfake_csv_file)
+            root_dir = hardfake_root_dir
 
             def create_image_path(row):
                 folder = 'fake' if row['label'] == 'fake' else 'real'
@@ -149,7 +150,6 @@ class Dataset_selector:
                 return os.path.join(folder, img_name)
 
             full_data['images_id'] = full_data.apply(create_image_path, axis=1)
-            root_dir = hardfake_root_dir
 
             train_data, temp_data = train_test_split(
                 full_data, test_size=0.3, stratify=full_data['label'], random_state=3407
@@ -162,22 +162,27 @@ class Dataset_selector:
             if not rvf10k_train_csv or not rvf10k_valid_csv or not rvf10k_root_dir:
                 raise ValueError("rvf10k_train_csv, rvf10k_valid_csv, and rvf10k_root_dir must be provided")
             train_data = pd.read_csv(rvf10k_train_csv)
+            valid_data = pd.read_csv(rvf10k_valid_csv)
+            root_dir = rvf10k_root_dir  # Explicitly set root_dir
 
             def create_image_path(row, split='train'):
                 folder = 'fake' if row['label'] == 0 else 'real'
-                img_name = row['id']
-                img_name = os.path.basename(img_name)
-                if not img_name.endswith('.jpg'):
-                    img_name += '.jpg'
+                img_name = row['images_id']
                 return os.path.join('rvf10k', split, folder, img_name)
 
             train_data['images_id'] = train_data.apply(lambda row: create_image_path(row, 'train'), axis=1)
-            valid_data = pd.read_csv(rvf10k_valid_csv)
             valid_data['images_id'] = valid_data.apply(lambda row: create_image_path(row, 'valid'), axis=1)
 
-            val_data, test_data = train_test_split(
-                valid_data, test_size=0.5, stratify=valid_data['label'], random_state=3407
-            )
+            # Load test data if test_csv is provided
+            if rvf10k_test_csv and os.path.exists(rvf10k_test_csv):
+                test_data = pd.read_csv(rvf10k_test_csv)
+                test_data['images_id'] = test_data.apply(lambda row: create_image_path(row, 'test'), axis=1)
+            else:
+                # Fallback to splitting valid_data
+                val_data, test_data = train_test_split(
+                    valid_data, test_size=0.5, stratify=valid_data['label'], random_state=3407
+                )
+            val_data = valid_data  # Ensure val_data is set correctly
 
         elif dataset_mode == '140k':
             if not realfake140k_train_csv or not realfake140k_valid_csv or not realfake140k_test_csv or not realfake140k_root_dir:
@@ -279,12 +284,12 @@ class Dataset_selector:
             val_data = create_dataframe('valid')
             test_data = create_dataframe('test')
 
-            # Shuffle dataframes explicitly (similar to code 2 for 140k)
+            # Shuffle dataframes explicitly
             train_data = train_data.sample(frac=1, random_state=3407).reset_index(drop=True)
             val_data = val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
             test_data = test_data.sample(frac=1, random_state=3407).reset_index(drop=True)
 
-        # Reset indices (already handled for 330k, but kept for consistency)
+        # Reset indices
         train_data = train_data.reset_index(drop=True)
         val_data = val_data.reset_index(drop=True)
         test_data = test_data.reset_index(drop=True)
@@ -309,8 +314,8 @@ class Dataset_selector:
         # Set up DataLoader
         if ddp:
             train_sampler = DistributedSampler(train_dataset, shuffle=True)
-            val_sampler = DistributedSampler(val_dataset, shuffle=True)  # Enable shuffling for validation
-            test_sampler = DistributedSampler(test_dataset, shuffle=True)  # Enable shuffling for test
+            val_sampler = DistributedSampler(val_dataset, shuffle=False)  # No shuffle for validation
+            test_sampler = DistributedSampler(test_dataset, shuffle=False)  # No shuffle for test
 
             self.loader_train = DataLoader(
                 train_dataset,
@@ -344,14 +349,14 @@ class Dataset_selector:
             self.loader_val = DataLoader(
                 val_dataset,
                 batch_size=eval_batch_size,
-                shuffle=True,  # Enable shuffling for validation
+                shuffle=False,  # No shuffle for validation
                 num_workers=num_workers,
                 pin_memory=pin_memory,
             )
             self.loader_test = DataLoader(
                 test_dataset,
                 batch_size=eval_batch_size,
-                shuffle=True,  # Enable shuffling for test
+                shuffle=False,  # No shuffle for test
                 num_workers=num_workers,
                 pin_memory=pin_memory,
             )
@@ -370,6 +375,7 @@ class Dataset_selector:
             except Exception as e:
                 print(f"Error loading sample {name} batch: {e}")
 
+
 if __name__ == "__main__":
     dataset_hardfake = Dataset_selector(
         dataset_mode='hardfake',
@@ -387,7 +393,7 @@ if __name__ == "__main__":
         rvf10k_root_dir='/kaggle/input/rvf10k',
         train_batch_size=256,
         eval_batch_size=128,
-        ddp=True,
+        ddp=False,
     )
 
     dataset_140k = Dataset_selector(
