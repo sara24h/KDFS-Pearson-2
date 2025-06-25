@@ -17,7 +17,7 @@ from data.dataset import Dataset_selector
 def parse_args():
     parser = argparse.ArgumentParser(description='Transfer learning with ResNet50 for fake vs real face classification.')
     parser.add_argument('--dataset_mode', type=str, required=True, 
-                        choices=['hardfake', 'rvf10k', '140k', '190k', '200k', '12.9k', '330k'],  # Added 330k
+                        choices=['hardfake', 'rvf10k', '140k', '190k', '200k', '12.9k', '330k'],
                         help='Dataset to use: hardfake, rvf10k, 140k, 190k, 200k, 12.9k, or 330k')
     parser.add_argument('--data_dir', type=str, required=True,
                         help='Path to the dataset directory containing images and CSV file(s)')
@@ -45,8 +45,8 @@ if __name__ == "__main__":
     dataset_mode = args.dataset_mode
     data_dir = args.data_dir
     teacher_dir = args.teacher_dir
-    img_height = 256 if dataset_mode in ['rvf10k', '140k', '190k', '200k', '12.9k', '330k'] else args.img_height  # Added 330k
-    img_width = 256 if dataset_mode in ['rvf10k', '140k', '190k', '200k', '12.9k', '330k'] else args.img_width  # Added 330k
+    img_height = 256 if dataset_mode in ['rvf10k', '140k', '190k', '200k', '12.9k', '330k'] else args.img_height
+    img_width = 256 if dataset_mode in ['rvf10k', '140k', '190k', '200k', '12.9k', '330k'] else args.img_width
     batch_size = args.batch_size
     epochs = args.epochs
     lr = args.lr
@@ -57,91 +57,60 @@ if __name__ == "__main__":
     if not os.path.exists(teacher_dir):
         os.makedirs(teacher_dir)
 
-    # Initialize dataset using Dataset_selector from dataset.py
+    # Initialize dataset using Dataset_selector
+    dataset_args = {
+        'dataset_mode': dataset_mode,
+        'train_batch_size': batch_size,
+        'eval_batch_size': batch_size,
+        'num_workers': 4,
+        'pin_memory': True,
+        'ddp': False
+    }
+    
     if dataset_mode == 'hardfake':
-        dataset = Dataset_selector(
-            dataset_mode='hardfake',
-            hardfake_csv_file=os.path.join(data_dir, 'data.csv'),
-            hardfake_root_dir=data_dir,
-            train_batch_size=batch_size,
-            eval_batch_size=batch_size,
-            num_workers=4,
-            pin_memory=True,
-            ddp=False
-        )
+        dataset_args.update({
+            'hardfake_csv_file': os.path.join(data_dir, 'data.csv'),
+            'hardfake_root_dir': data_dir
+        })
     elif dataset_mode == 'rvf10k':
-        dataset = Dataset_selector(
-            dataset_mode='rvf10k',
-            rvf10k_train_csv=os.path.join(data_dir, 'train.csv'),
-            rvf10k_valid_csv=os.path.join(data_dir, 'valid.csv'),
-            rvf10k_root_dir=data_dir,
-            train_batch_size=batch_size,
-            eval_batch_size=batch_size,
-            num_workers=4,
-            pin_memory=True,
-            ddp=False
-        )
+        dataset_args.update({
+            'rvf10k_train_csv': os.path.join(data_dir, 'train.csv'),
+            'rvf10k_valid_csv': os.path.join(data_dir, 'valid.csv'),
+            'rvf10k_root_dir': data_dir
+        })
     elif dataset_mode == '140k':
-        dataset = Dataset_selector(
-            dataset_mode='140k',
-            realfake140k_train_csv=os.path.join(data_dir, 'train.csv'),
-            realfake140k_valid_csv=os.path.join(data_dir, 'valid.csv'),
-            realfake140k_test_csv=os.path.join(data_dir, 'test.csv'),
-            realfake140k_root_dir=data_dir,
-            train_batch_size=batch_size,
-            eval_batch_size=batch_size,
-            num_workers=4,
-            pin_memory=True,
-            ddp=False
-        )
+        dataset_args.update({
+            'realfake140k_train_csv': os.path.join(data_dir, 'train.csv'),
+            'realfake140k_valid_csv': os.path.join(data_dir, 'valid.csv'),
+            'realfake140k_test_csv': os.path.join(data_dir, 'test.csv'),
+            'realfake140k_root_dir': data_dir
+        })
     elif dataset_mode == '200k':
-        dataset = Dataset_selector(
-            dataset_mode='200k',
-            realfake200k_train_csv=os.path.join(data_dir, 'train_labels.csv'),
-            realfake200k_val_csv=os.path.join(data_dir, 'val_labels.csv'),
-            realfake200k_test_csv=os.path.join(data_dir, 'test_labels.csv'),
-            realfake200k_root_dir=data_dir,
-            train_batch_size=batch_size,
-            eval_batch_size=batch_size,
-            num_workers=4,
-            pin_memory=True,
-            ddp=False
-        )
+        dataset_args.update({
+            'realfake200k_train_csv': os.path.join(data_dir, 'train_labels.csv'),
+            'realfake200k_val_csv': os.path.join(data_dir, 'val_labels.csv'),
+            'realfake200k_test_csv': os.path.join(data_dir, 'test_labels.csv'),
+            'realfake200k_root_dir': data_dir
+        })
     elif dataset_mode == '190k':
-        dataset = Dataset_selector(
-            dataset_mode='190k',
-            realfake190k_root_dir=data_dir,
-            train_batch_size=batch_size,
-            eval_batch_size=batch_size,
-            num_workers=4,
-            pin_memory=True,
-            ddp=False
-        )
+        dataset_args.update({
+            'realfake190k_root_dir': data_dir
+        })
     elif dataset_mode == '12.9k':
-        dataset = Dataset_selector(
-            dataset_mode='12.9k',
-            dataset_12_9k_csv_file=os.path.join(data_dir, 'dataset.csv'),
-            dataset_12_9k_root_dir=data_dir,
-            train_batch_size=batch_size,
-            eval_batch_size=batch_size,
-            num_workers=4,
-            pin_memory=True,
-            ddp=False
-        )
+        dataset_args.update({
+            'dataset_12_9k_csv_file': os.path.join(data_dir, 'dataset.csv'),
+            'dataset_12_9k_root_dir': data_dir
+        })
     elif dataset_mode == '330k':
-        dataset = Dataset_selector(
-            dataset_mode='330k',
-            realfake330k_root_dir=data_dir,
-            train_batch_size=batch_size,
-            eval_batch_size=batch_size,
-            num_workers=4,
-            pin_memory=True,
-            ddp=False
-        )
+        dataset_args.update({
+            'realfake330k_root_dir': data_dir
+        })
+
+    dataset = Dataset_selector(**dataset_args)
 
     train_loader = dataset.loader_train
-    val_loader = dataset.loader_val
-    test_loader = dataset.loader_test
+    val_loader = dataset.loader_val if hasattr(dataset, 'loader_val') else None
+    test_loader = dataset.loader_test if hasattr(dataset, 'loader_test') else None
 
     model = models.resnet50(weights='IMAGENET1K_V1')
     num_ftrs = model.fc.in_features
@@ -161,7 +130,7 @@ if __name__ == "__main__":
         {'params': model.fc.parameters(), 'lr': lr}
     ], weight_decay=1e-4)
 
-    scaler = torch.amp.GradScaler('cuda') if device.type == 'cuda' else None
+    scaler = GradScaler('cuda') if device.type == 'cuda' else None
 
     if device.type == 'cuda':
         torch.cuda.empty_cache()
@@ -179,7 +148,7 @@ if __name__ == "__main__":
             labels = labels.to(device).float()
             optimizer.zero_grad()
 
-            with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
+            with autocast('cuda', enabled=device.type == 'cuda'):
                 outputs = model(images).squeeze(1)
                 loss = criterion(outputs, labels)
 
@@ -200,105 +169,108 @@ if __name__ == "__main__":
         train_accuracy = 100 * correct_train / total_train
         print(f'Epoch {epoch+1}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%')
 
-        model.eval()
-        val_loss = 0.0
-        correct_val = 0
-        total_val = 0
-        with torch.no_grad():
-            for images, labels in val_loader:
-                images = images.to(device)
-                labels = labels.to(device).float()
-                with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
-                    outputs = model(images).squeeze(1)
-                    loss = criterion(outputs, labels)
-                val_loss += loss.item()
-                preds = (torch.sigmoid(outputs) > 0.5).float()
-                correct_val += (preds == labels).sum().item()
-                total_val += labels.size(0)
+        if val_loader:
+            model.eval()
+            val_loss = 0.0
+            correct_val = 0
+            total_val = 0
+            with torch.no_grad():
+                for images, labels in val_loader:
+                    images = images.to(device)
+                    labels = labels.to(device).float()
+                    with autocast('cuda', enabled=device.type == 'cuda'):
+                        outputs = model(images).squeeze(1)
+                        loss = criterion(outputs, labels)
+                    val_loss += loss.item()
+                    preds = (torch.sigmoid(outputs) > 0.5).float()
+                    correct_val += (preds == labels).sum().item()
+                    total_val += labels.size(0)
 
-        val_loss = val_loss / len(val_loader)
-        val_accuracy = 100 * correct_val / total_val
-        print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%')
+            val_loss = val_loss / len(val_loader)
+            val_accuracy = 100 * correct_val / total_val
+            print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%')
 
-        if val_accuracy > best_val_acc:
-            best_val_acc = val_accuracy
-            torch.save(model.state_dict(), best_model_path)
-            print(f'Saved best model with validation accuracy: {val_accuracy:.2f}% at epoch {epoch+1}')
+            if val_accuracy > best_val_acc:
+                best_val_acc = val_accuracy
+                torch.save(model.state_dict(), best_model_path)
+                print(f'Saved best model with validation accuracy: {val_accuracy:.2f}% at epoch {epoch+1}')
 
     torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model_final.pth'))
     print(f'Saved final model at epoch {epochs}')
 
-    model.eval()
-    test_loss = 0.0
-    correct = 0
-    total = 0
-    with torch.no_grad():
-        for images, labels in test_loader:
-            images = images.to(device)
-            labels = labels.to(device).float()
-            with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
-                outputs = model(images).squeeze(1)
-                loss = criterion(outputs, labels)
-            test_loss += loss.item()
-            preds = (torch.sigmoid(outputs) > 0.5).float()
-            correct += (preds == labels).sum().item()
-            total += labels.size(0)
-    test_loss = test_loss / len(test_loader)
-    test_accuracy = 100 * correct / total
-    print(f'Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.2f}%')
+    if test_loader:
+        model.eval()
+        test_loss = 0.0
+        correct = 0
+        total = 0
+        with torch.no_grad():
+            for images, labels in test_loader:
+                images = images.to(device)
+                labels = labels.to(device).float()
+                with autocast('cuda', enabled=device.type == 'cuda'):
+                    outputs = model(images).squeeze(1)
+                    loss = criterion(outputs, labels)
+                test_loss += loss.item()
+                preds = (torch.sigmoid(outputs) > 0.5).float()
+                correct += (preds == labels).sum().item()
+                total += labels.size(0)
+        test_loss = test_loss / len(test_loader)
+        test_accuracy = 100 * correct / total
+        print(f'Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.2f}%')
 
-    val_data = dataset.loader_test.dataset.data
-    transform_test = dataset.loader_test.dataset.transform
-    img_column = 'filename' if dataset_mode in ['190k', '200k', '330k'] else 'path' if dataset_mode in ['140k', '12.9k'] else 'images_id'  # Updated for 330k
+    if test_loader:
+        val_data = test_loader.dataset.data
+        transform_test = test_loader.dataset.transform
+        img_column = 'filename' if dataset_mode in ['190k', '200k', '330k'] else 'path' if dataset_mode in ['140k', '12.9k'] else 'images_id'
 
-    random_indices = random.sample(range(len(val_data)), min(10, len(val_data)))
-    fig, axes = plt.subplots(2, 5, figsize=(15, 8))
-    axes = axes.ravel()
+        random_indices = random.sample(range(len(val_data)), min(10, len(val_data)))
+        fig, axes = plt.subplots(2, 5, figsize=(15, 8))
+        axes = axes.ravel()
 
-    with torch.no_grad():
-        for i, idx in enumerate(random_indices):
-            row = val_data.iloc[idx]
-            img_name = row[img_column]
-            label = row['label']
+        with torch.no_grad():
+            for i, idx in enumerate(random_indices):
+                row = val_data.iloc[idx]
+                img_name = row[img_column]
+                label = row['label']
 
-            if dataset_mode == '140k':
-                img_path = os.path.join(data_dir, img_name)
-            elif dataset_mode == '12.9k':
-                img_path = os.path.join(data_dir, img_name)
-            elif dataset_mode in ['190k', '200k', '330k']:
-                subfolder = 'Real' if label == 1 else 'Fake' if dataset_mode in ['190k', '330k'] else 'ai_images'
-                if dataset_mode == '190k':
-                    split = 'Test' if row['filename'].startswith('Test') else 'Validation'
-                    img_path = os.path.join(data_dir, split, subfolder, os.path.basename(img_name))
-                elif dataset_mode == '330k':
-                    split = 'test' if row['filename'].startswith('test') else 'valid'
-                    img_path = os.path.join(data_dir, split, subfolder, os.path.basename(img_name))
+                if dataset_mode == '140k':
+                    img_path = os.path.join(data_dir, img_name)
+                elif dataset_mode == '12.9k':
+                    img_path = os.path.join(data_dir, img_name)
+                elif dataset_mode in ['190k', '200k', '330k']:
+                    subfolder = 'Real' if label == 1 else 'Fake' if dataset_mode in ['190k', '330k'] else 'ai_images'
+                    if dataset_mode == '190k':
+                        split = 'Test' if row['filename'].startswith('Test') else 'Validation'
+                        img_path = os.path.join(data_dir, split, subfolder, os.path.basename(img_name))
+                    elif dataset_mode == '330k':
+                        split = 'test' if row['filename'].startswith('test') else 'valid'
+                        img_path = os.path.join(data_dir, split, subfolder, os.path.basename(img_name))
+                    else:
+                        img_path = os.path.join(data_dir, 'my_real_vs_ai_dataset', subfolder, img_name)
                 else:
-                    img_path = os.path.join(data_dir, 'my_real_vs_ai_dataset', subfolder, img_name)
-            else:
-                img_path = os.path.join(data_dir, img_name)
+                    img_path = os.path.join(data_dir, img_name)
 
-            if not os.path.exists(img_path):
-                print(f"Warning: Image not found: {img_path}")
-                axes[i].set_title("Image not found")
+                if not os.path.exists(img_path):
+                    print(f"Warning: Image not found: {img_path}")
+                    axes[i].set_title("Image not found")
+                    axes[i].axis('off')
+                    continue
+                image = Image.open(img_path).convert('RGB')
+                image_transformed = transform_test(image).unsqueeze(0).to(device)
+                with autocast('cuda', enabled=device.type == 'cuda'):
+                    output = model(image_transformed).squeeze(1)
+                prob = torch.sigmoid(output).item()
+                predicted_label = 'real' if prob > 0.5 else 'fake'
+                true_label = 'real' if label == 1 else 'fake'
+                axes[i].imshow(image)
+                axes[i].set_title(f'True: {true_label}\nPred: {predicted_label}', fontsize=10)
                 axes[i].axis('off')
-                continue
-            image = Image.open(img_path).convert('RGB')
-            image_transformed = transform_test(image).unsqueeze(0).to(device)
-            with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
-                output = model(image_transformed).squeeze(1)
-            prob = torch.sigmoid(output).item()
-            predicted_label = 'real' if prob > 0.5 else 'fake'
-            true_label = 'real' if label == 1 else 'fake'
-            axes[i].imshow(image)
-            axes[i].set_title(f'True: {true_label}\nPred: {predicted_label}', fontsize=10)
-            axes[i].axis('off')
-            print(f"Image: {img_path}, True Label: {true_label}, Predicted: {predicted_label}")
+                print(f"Image: {img_path}, True Label: {true_label}, Predicted: {predicted_label}")
 
-    plt.tight_layout()
-    file_path = os.path.join(teacher_dir, 'test_samples.png')
-    plt.savefig(file_path)
-    display(IPImage(filename=file_path))
+        plt.tight_layout()
+        file_path = os.path.join(teacher_dir, 'test_samples.png')
+        plt.savefig(file_path)
+        display(IPImage(filename=file_path))
 
     for param in model.parameters():
         param.requires_grad = True
