@@ -58,7 +58,7 @@ class Dataset_selector:
         hardfake_root_dir=None,
         rvf10k_train_csv=None,
         rvf10k_valid_csv=None,
-        rvf10k_test_csv=None,  # Added for test.csv support
+        rvf10k_test_csv=None,
         rvf10k_root_dir=None,
         realfake140k_train_csv=None,
         realfake140k_valid_csv=None,
@@ -71,7 +71,7 @@ class Dataset_selector:
         realfake190k_root_dir=None,
         dataset_12_9k_csv_file=None,
         dataset_12_9k_root_dir=None,
-        realfake330k_root_dir=None,  
+        realfake330k_root_dir=None,
         train_batch_size=32,
         eval_batch_size=32,
         num_workers=8,
@@ -103,7 +103,7 @@ class Dataset_selector:
             mean = (0.4668, 0.3816, 0.3414)
             std = (0.2410, 0.2161, 0.2081)
         elif dataset_mode == '12.9k':
-            mean = (0.4970, 0.4026, 0.3579)  
+            mean = (0.4970, 0.4026, 0.3579)
             std = (0.2579, 0.2263, 0.2190)
         elif dataset_mode == '330k':
             mean = (0.4923, 0.4042, 0.3624)
@@ -132,7 +132,7 @@ class Dataset_selector:
         ])
 
         # Select appropriate column for image paths
-        img_column = 'path' if dataset_mode in ['rvf10k','140k', '12.9k'] else 'filename' if dataset_mode in ['200k', '190k', '330k'] else 'images_id'
+        img_column = 'path' if dataset_mode in ['rvf10k', '140k', '12.9k'] else 'filename' if dataset_mode in ['200k', '190k', '330k'] else 'images_id'
 
         # Load data based on dataset_mode
         if dataset_mode == 'hardfake':
@@ -142,7 +142,7 @@ class Dataset_selector:
             root_dir = hardfake_root_dir
 
             def create_image_path(row):
-                folder = 'fake' if row['label'] == 'fake' else 'real'
+                folder = 'fake' if row['label'] == 'real' else 'fake'
                 img_name = row['path']
                 img_name = os.path.basename(img_name)
                 if not img_name.endswith('.jpg'):
@@ -152,7 +152,7 @@ class Dataset_selector:
             full_data['path'] = full_data.apply(create_image_path, axis=1)
 
             train_data, temp_data = train_test_split(
-                full_data, test_size=0.3, stratify=full_data['label'], random_state=3407
+                full_data, test_size=0.5, stratify=full_data['label'], random_state=3407
             )
             val_data, test_data = train_test_split(
                 temp_data, test_size=0.5, stratify=temp_data['label'], random_state=3407
@@ -163,26 +163,29 @@ class Dataset_selector:
                 raise ValueError("rvf10k_train_csv, rvf10k_valid_csv, and rvf10k_root_dir must be provided")
             train_data = pd.read_csv(rvf10k_train_csv)
             valid_data = pd.read_csv(rvf10k_valid_csv)
-            root_dir = rvf10k_root_dir  # Explicitly set root_dir
+            root_dir = rvf10k_root_dir
 
             def create_image_path(row, split='train'):
                 folder = 'fake' if row['label'] == 0 else 'real'
-                img_name = row['path']
+                img_name = os.path.basename(row['path'])  # فقط نام فایل (مانندل 28609.jpg)
                 return os.path.join('rvf10k', split, folder, img_name)
 
             train_data['path'] = train_data.apply(lambda row: create_image_path(row, 'train'), axis=1)
             valid_data['path'] = valid_data.apply(lambda row: create_image_path(row, 'valid'), axis=1)
 
+            # چاپ مسیرهای نمونه برای دیباگ
+            print("Sample train paths:", train_data['path'].head().tolist())
+            print("Sample valid paths:", valid_data['path'].head().tolist())
+
             # Load test data if test_csv is provided
             if rvf10k_test_csv and os.path.exists(rvf10k_test_csv):
                 test_data = pd.read_csv(rvf10k_test_csv)
-                test_data['path'] = test_data.apply(lambda row: create_image_path(row, 'test'), axis=1)
+                test_data['path'] = test_data.apply(lambda row: create_image_path(row, 'valid'), axis=1)
             else:
-                # Fallback to splitting valid_data
                 val_data, test_data = train_test_split(
                     valid_data, test_size=0.5, stratify=valid_data['label'], random_state=3407
                 )
-            val_data = valid_data  # Ensure val_data is set correctly
+            val_data = valid_data
 
         elif dataset_mode == '140k':
             if not realfake140k_train_csv or not realfake140k_valid_csv or not realfake140k_test_csv or not realfake140k_root_dir:
@@ -221,15 +224,15 @@ class Dataset_selector:
                 data = {'filename': [], 'label': []}
                 real_path = os.path.join(root_dir, split, 'Real')
                 fake_path = os.path.join(root_dir, split, 'Fake')
-                
+
                 for img_path in glob.glob(os.path.join(real_path, 'real_*.jpg')):
                     data['filename'].append(os.path.relpath(img_path, root_dir))
                     data['label'].append(1)  # Real = 1
-                
+
                 for img_path in glob.glob(os.path.join(fake_path, 'fake_*.jpg')):
                     data['filename'].append(os.path.relpath(img_path, root_dir))
                     data['label'].append(0)  # Fake = 0
-                
+
                 df = pd.DataFrame(data)
                 if df.empty:
                     raise ValueError(f"No images found in {split} directory")
@@ -266,15 +269,15 @@ class Dataset_selector:
                 data = {'filename': [], 'label': []}
                 real_path = os.path.join(root_dir, split, 'Real')
                 fake_path = os.path.join(root_dir, split, 'Fake')
-                
+
                 for img_path in glob.glob(os.path.join(real_path, '*.jpg')):
                     data['filename'].append(os.path.relpath(img_path, root_dir))
                     data['label'].append(1)  # Real = 1
-                
+
                 for img_path in glob.glob(os.path.join(fake_path, '*.jpg')):
                     data['filename'].append(os.path.relpath(img_path, root_dir))
                     data['label'].append(0)  # Fake = 0
-                
+
                 df = pd.DataFrame(data)
                 if df.empty:
                     raise ValueError(f"No images found in {split} directory")
@@ -314,8 +317,8 @@ class Dataset_selector:
         # Set up DataLoader
         if ddp:
             train_sampler = DistributedSampler(train_dataset, shuffle=True)
-            val_sampler = DistributedSampler(val_dataset, shuffle=False)  # No shuffle for validation
-            test_sampler = DistributedSampler(test_dataset, shuffle=False)  # No shuffle for test
+            val_sampler = DistributedSampler(val_dataset, shuffle=False)
+            test_sampler = DistributedSampler(test_dataset, shuffle=False)
 
             self.loader_train = DataLoader(
                 train_dataset,
@@ -349,14 +352,14 @@ class Dataset_selector:
             self.loader_val = DataLoader(
                 val_dataset,
                 batch_size=eval_batch_size,
-                shuffle=False,  # No shuffle for validation
+                shuffle=False,
                 num_workers=num_workers,
                 pin_memory=pin_memory,
             )
             self.loader_test = DataLoader(
                 test_dataset,
                 batch_size=eval_batch_size,
-                shuffle=False,  # No shuffle for test
+                shuffle=False,
                 num_workers=num_workers,
                 pin_memory=pin_memory,
             )
@@ -374,8 +377,7 @@ class Dataset_selector:
                 print(f"{name} batch label distribution: {torch.bincount(sample[1].int())}")
             except Exception as e:
                 print(f"Error loading sample {name} batch: {e}")
-
-
+    
 if __name__ == "__main__":
     dataset_hardfake = Dataset_selector(
         dataset_mode='hardfake',
@@ -393,7 +395,7 @@ if __name__ == "__main__":
         rvf10k_root_dir='/kaggle/input/rvf10k',
         train_batch_size=256,
         eval_batch_size=128,
-        ddp=False,
+        ddp=True,
     )
 
     dataset_140k = Dataset_selector(
