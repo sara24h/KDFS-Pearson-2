@@ -1,3 +1,57 @@
+import torch
+import argparse
+from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
+from model.pruned_model.ResNet_pruned import ResNet_50_pruned_hardfakevsreal
+from thop import profile
+
+# Base FLOPs and parameters for each dataset
+Flops_baselines = {
+    "ResNet_50": {
+        "hardfakevsreal": 7700.0,
+        "rvf10k": 5000.0,
+        "140k": 5390.0,
+        "200k": 5390.0,
+        "190k": 5390.0,
+        "330k": 5390.0,  
+    }
+}
+Params_baselines = {
+    "ResNet_50": {
+        "hardfakevsreal": 14.97,
+        "rvf10k": 25.50,
+        "140k": 23.51,
+        "200k": 23.51,
+        "190k": 23.51,
+        "330k": 23.51,  
+    }
+}
+image_sizes = {
+    "hardfakevsreal": 300,
+    "rvf10k": 256,
+    "140k": 256,
+    "200k": 256,
+    "190k": 256,
+    "330k": 256,  
+}
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--dataset_mode",
+        type=str,
+        default="hardfake",
+        choices=("hardfake", "rvf10k", "140k", "200k", "190k", "330k"),
+        help="The type of dataset",
+    )
+    parser.add_argument(
+        "--sparsed_student_ckpt_path",
+        type=str,
+        default=None,
+        help="The path where to load the sparsed student ckpt",
+    )
+    return parser.parse_args()
+
+
 def get_flops_and_params(args):
     # Map dataset_mode to dataset_type
     dataset_type = {
