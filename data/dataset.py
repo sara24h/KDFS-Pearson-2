@@ -1,4 +1,4 @@
-simport torch
+import torch
 from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms as transforms
 import os
@@ -297,7 +297,7 @@ class Dataset_selector:
 
             train_data = train_data.sample(frac=1, random_state=3407).reset_index(drop=True)
             val_data = val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
-            test_data = test_data.sample(frac=1, random_state=3407).reset_index(drop=True)
+            test_data = test_data.sample(frac=1, random_state=3407).reset_index(drop=False)
 
         # Reset indices
         train_data = train_data.reset_index(drop=True)
