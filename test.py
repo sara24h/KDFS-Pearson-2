@@ -12,6 +12,7 @@ import glob
 from utils import meter
 from get_flops_and_params import get_flops_and_params
 from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
+from data.dataset import Dataset_selector
 
 class Test:
     def __init__(self, args):
@@ -38,8 +39,8 @@ class Test:
                 if not os.path.exists(csv_path):
                     raise FileNotFoundError(f"CSV file not found: {csv_path}")
             elif self.dataset_mode == 'rvf10k':
-                train_csv = os.path.join(self.dataset_dir, 'train.csv')
-                valid_csv = os.path.join(self.dataset_dir, 'valid.csv')
+                train_csv = '/kaggle/input/rvf10k/train.csv'
+                valid_csv = '/kaggle/input/rvf10k/valid.csv'
                 if not os.path.exists(train_csv) or not os.path.exists(valid_csv):
                     raise FileNotFoundError(f"CSV files not found: {train_csv}, {valid_csv}")
             elif self.dataset_mode == '140k':
@@ -72,8 +73,8 @@ class Test:
             elif self.dataset_mode == 'rvf10k':
                 dataset = Dataset_selector(
                     dataset_mode='rvf10k',
-                    rvf10k_train_csv=os.path.join(self.dataset_dir, 'train.csv'),
-                    rvf10k_valid_csv=os.path.join(self.dataset_dir, 'valid.csv'),
+                    rvf10k_train_csv='/kaggle/input/rvf10k/train.csv',
+                    rvf10k_valid_csv='/kaggle/input/rvf10k/valid.csv',
                     rvf10k_root_dir=self.dataset_dir,
                     train_batch_size=self.test_batch_size,
                     eval_batch_size=self.test_batch_size,
