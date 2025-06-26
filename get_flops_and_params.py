@@ -18,7 +18,7 @@ Flops_baselines = {
 Params_baselines = {
     "ResNet_50": {
         "hardfakevsreal": 14.97,
-        "rvf10k": 25.50,
+        "rvf10k": 23.51,
         "140k": 23.51,
         "200k": 23.51,
         "190k": 23.51,
