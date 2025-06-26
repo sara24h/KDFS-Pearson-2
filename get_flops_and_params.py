@@ -91,15 +91,15 @@ def get_flops_and_params(args):
     if args.dataset_mode == "hardfake":
         pruned_model = ResNet_50_pruned_hardfakevsreal(masks=masks)
     elif args.dataset_mode == "rvf10k":
-        pruned_model = ResNet_50_pruned_rvf10k(masks=masks)
+        pruned_model =  ResNet_50_sparse_hardfakevsreal(masks=masks)
     elif args.dataset_mode == "140k":
-        pruned_model = ResNet_50_pruned_140k(masks=masks)
+        pruned_model = ResNet_50_sparse_hardfakevsreal(masks=masks)
     elif args.dataset_mode == "200k":
-        pruned_model = ResNet_50_pruned_200k(masks=masks)
+        pruned_model =  ResNet_50_sparse_hardfakevsreal(masks=masks)
     elif args.dataset_mode == "190k":
-        pruned_model = ResNet_50_pruned_190k(masks=masks)
+        pruned_model =  ResNet_50_sparse_hardfakevsreal(masks=masks)
     elif args.dataset_mode == "330k":
-        pruned_model = ResNet_50_pruned_330k(masks=masks)
+        pruned_model =  ResNet_50_sparse_hardfakevsreal(masks=masks)
     
     # Set input size based on dataset
     input = torch.rand([1, 3, image_sizes[dataset_type], image_sizes[dataset_type]])
