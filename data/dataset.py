@@ -1,4 +1,4 @@
-import torch
+simport torch
 from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms as transforms
 import os
@@ -324,7 +324,7 @@ class Dataset_selector:
         # Set up DataLoader
         if ddp:
             train_sampler = DistributedSampler(train_dataset, shuffle=True)
-            val_sampler = DistributedSampler(val_dataset, shuffle=False)
+            val_sampler = DistributedSampler(val_dataset, shuffle=True)
             test_sampler = DistributedSampler(test_dataset, shuffle=False)
 
             self.loader_train = DataLoader(
@@ -359,7 +359,7 @@ class Dataset_selector:
             self.loader_val = DataLoader(
                 val_dataset,
                 batch_size=eval_batch_size,
-                shuffle=False,
+                shuffle=True,
                 num_workers=num_workers,
                 pin_memory=pin_memory,
             )
