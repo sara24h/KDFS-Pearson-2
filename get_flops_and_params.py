@@ -1,56 +1,3 @@
-import torch
-import argparse
-from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
-from model.pruned_model.ResNet_pruned import ResNet_50_pruned_hardfakevsreal
-from thop import profile
-
-# Base FLOPs and parameters for each dataset
-Flops_baselines = {
-    "ResNet_50": {
-        "hardfakevsreal": 7700.0,
-        "rvf10k": 5000.0,
-        "140k": 5390.0,
-        "200k": 5390.0,
-        "190k": 5390.0,
-        "330k": 5390.0,  
-    }
-}
-Params_baselines = {
-    "ResNet_50": {
-        "hardfakevsreal": 14.97,
-        "rvf10k": 25.50,
-        "140k": 23.51,
-        "200k": 23.51,
-        "190k": 23.51,
-        "330k": 23.51,  
-    }
-}
-image_sizes = {
-    "hardfakevsreal": 300,
-    "rvf10k": 256,
-    "140k": 256,
-    "200k": 256,
-    "190k": 256,
-    "330k": 256,  
-}
-
-def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--dataset_mode",
-        type=str,
-        default="hardfake",
-        choices=("hardfake", "rvf10k", "140k", "200k", "190k", "330k"),
-        help="The type of dataset",
-    )
-    parser.add_argument(
-        "--sparsed_student_ckpt_path",
-        type=str,
-        default=None,
-        help="The path where to load the sparsed student ckpt",
-    )
-    return parser.parse_args()
-
 def get_flops_and_params(args):
     # Map dataset_mode to dataset_type
     dataset_type = {
@@ -63,18 +10,18 @@ def get_flops_and_params(args):
     }[args.dataset_mode]
 
     # Load sparse student model to extract masks
-    if dataset_mode == "hardfake":
+    if args.dataset_mode == "hardfake":
         student = ResNet_50_sparse_hardfakevsreal()
-    elif dataset_mode == "rvf10k":
-        student = ResNet_50_sparse_rvf10k()
-    elif dataset_mode == "140k":
-        student = ResNet_50_sparse_140k()
-    elif dataset_mode == "200k":
-        student = ResNet_50_sparse_200k()
-    elif dataset_mode == "190k":
-        student = ResNet_50_sparse_190k()
-    elif dataset_mode == "330k":
-        student = ResNet_50_sparse_330k()
+    elif args.dataset_mode == "rvf10k":
+        student = ResNet_50_sparse_hardfakevsreal()
+    elif args.dataset_mode == "140k":
+        student = ResNet_50_sparse_hardfakevsreal()
+    elif args.dataset_mode == "200k":
+        student =ResNet_50_sparse_hardfakevsreal()
+    elif args.dataset_mode == "190k":
+        student = ResNet_50_sparse_hardfakevsreal()
+    elif args.dataset_mode == "330k":
+        student = ResNet_50_sparse_hardfakevsreal()
 
     ckpt_student = torch.load(args.sparsed_student_ckpt_path, map_location="cpu", weights_only=True)
     student.load_state_dict(ckpt_student["student"])
@@ -87,17 +34,17 @@ def get_flops_and_params(args):
     ]
 
     # Load pruned model with masks
-    if dataset_mode == "hardfake":
+    if args.dataset_mode == "hardfake":
         pruned_model = ResNet_50_pruned_hardfakevsreal(masks=masks)
-    elif dataset_mode == "rvf10k":
+    elif args.dataset_mode == "rvf10k":
         pruned_model = ResNet_50_pruned_rvf10k(masks=masks)
-    elif dataset_mode == "140k":
+    elif args.dataset_mode == "140k":
         pruned_model = ResNet_50_pruned_140k(masks=masks)
-    elif dataset_mode == "200k":
+    elif args.dataset_mode == "200k":
         pruned_model = ResNet_50_pruned_200k(masks=masks)
-    elif dataset_mode == "190k":
+    elif args.dataset_mode == "190k":
         pruned_model = ResNet_50_pruned_190k(masks=masks)
-    elif dataset_mode == "330k":
+    elif args.dataset_mode == "330k":
         pruned_model = ResNet_50_pruned_330k(masks=masks)
     
     # Set input size based on dataset
