@@ -467,32 +467,56 @@ def main():
     else:
         print("Using standard PyTorch DataLoader.")
 
+    # Define dataset_args with only relevant arguments based on dataset_mode
     dataset_args = {
         'dataset_mode': args.dataset_mode,
-        'hardfake_csv_file': args.hardfake_csv_file,
-        'hardfake_root_dir': args.dataset_dir,
-        'rvf10k_train_csv': args.rvf10k_train_csv,
-        'rvf10k_valid_csv': args.rvf10k_valid_csv,
-        'rvf10k_root_dir': args.dataset_dir,
-        'realfake140k_train_csv': args.realfake140k_train_csv,
-        'realfake140k_valid_csv': args.realfake140k_valid_csv,
-        'realfake140k_test_csv': args.realfake140k_test_csv,
-        'realfake140k_root_dir': args.dataset_dir,
-        'realfake200k_train_csv': args.realfake200k_train_csv,
-        'realfake200k_val_csv': args.realfake200k_valid_csv,
-        'realfake200k_test_csv': args.realfake200k_test_csv,
-        'realfake200k_root_dir': args.dataset_dir,
-        'realfake190k_root_dir': args.realfake190k_root_dir,
-        'realfake330k_root_dir': args.realfake330k_root_dir,
-        'dataset_672k_train_label_txt': args.dataset_672k_train_label_txt,
-        'dataset_672k_val_label_txt': args.dataset_672k_val_label_txt,
-        'dataset_672k_root_dir': args.dataset_672k_root_dir,
         'train_batch_size': args.train_batch_size,
         'eval_batch_size': args.eval_batch_size,
         'num_workers': args.num_workers,
         'pin_memory': args.pin_memory,
         'ddp': args.ddp,
     }
+
+    # Add dataset-specific arguments
+    if args.dataset_mode == 'rvf10k':
+        dataset_args.update({
+            'rvf10k_train_csv': args.rvf10k_train_csv,
+            'rvf10k_valid_csv': args.rvf10k_valid_csv,
+            'rvf10k_root_dir': args.dataset_dir,
+        })
+    elif args.dataset_mode == 'hardfake':
+        dataset_args.update({
+            'hardfake_csv_file': args.hardfake_csv_file,
+            'hardfake_root_dir': args.dataset_dir,
+        })
+    elif args.dataset_mode == '140k':
+        dataset_args.update({
+            'realfake140k_train_csv': args.realfake140k_train_csv,
+            'realfake140k_valid_csv': args.realfake140k_valid_csv,
+            'realfake140k_test_csv': args.realfake140k_test_csv,
+            'realfake140k_root_dir': args.dataset_dir,
+        })
+    elif args.dataset_mode == '200k':
+        dataset_args.update({
+            'realfake200k_train_csv': args.realfake200k_train_csv,
+            'realfake200k_val_csv': args.realfake200k_valid_csv,
+            'realfake200k_test_csv': args.realfake200k_test_csv,
+            'realfake200k_root_dir': args.dataset_dir,
+        })
+    elif args.dataset_mode == '190k':
+        dataset_args.update({
+            'realfake190k_root_dir': args.realfake190k_root_dir,
+        })
+    elif args.dataset_mode == '330k':
+        dataset_args.update({
+            'realfake330k_root_dir': args.realfake330k_root_dir,
+        })
+    elif args.dataset_mode == '672k':
+        dataset_args.update({
+            'dataset_672k_train_label_txt': args.dataset_672k_train_label_txt,
+            'dataset_672k_val_label_txt': args.dataset_672k_val_label_txt,
+            'dataset_672k_root_dir': args.dataset_672k_root_dir,
+        })
 
     dataset = Dataset_selector(**dataset_args)
 
