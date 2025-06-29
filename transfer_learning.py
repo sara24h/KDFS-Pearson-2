@@ -3,7 +3,9 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data import DataLoader, DistributedSampler
 from torchvision import models, transforms
 from torch.amp import autocast, GradScaler
 from PIL import Image
@@ -13,7 +15,6 @@ import matplotlib.pyplot as plt
 from IPython.display import Image as IPImage, display
 from ptflops import get_model_complexity_info
 from thop import profile
-from data.dataset import Dataset_selector
 import glob
 
 def parse_args():
@@ -35,43 +36,62 @@ def parse_args():
                         help='Number of training epochs')
     parser.add_argument('--lr', type=float, default=0.0001,
                         help='Learning rate for the optimizer')
+    parser.add_argument('--num_workers', type=int, default=4,
+                        help='Number of worker processes for data loading')
+    parser.add_argument('--pin_memory', action='store_true',
+                        help='Pin memory for faster data transfer to GPU')
+    parser.add_argument('--seed', type=int, default=3407,
+                        help='Random seed for reproducibility')
+   
     return parser.parse_args()
 
-if __name__ == "__main__":
-    args = parse_args()
+def setup_ddp():
+    dist.init_process_group(backend='nccl')
+    torch.cuda.set_device(int(os.environ['LOCAL_RANK']))
 
-    # تنظیمات CUDA برای بهینه‌سازی
+def main():
+    args = parse_args()
+    
+    # تنظیم seed برای تکرارپذیری
+    torch.manual_seed(args.seed)
+    random.seed(args.seed)
+    
+    # تنظیم DDP
+    if args.ddp:
+        setup_ddp()
+    
+    # تنظیم دستگاه
+    device = torch.device(f"cuda:{int(os.environ['LOCAL_RANK'])}" if torch.cuda.is_available() and args.ddp else "cuda" if torch.cuda.is_available() else "cpu")
+    
+    # تنظیمات CUDA
     os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
     torch.backends.cudnn.benchmark = True
     torch.backends.cudnn.enabled = True
-
-    # تنظیم دستگاه و بررسی تعداد GPUها
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Number of GPUs available: {torch.cuda.device_count()}")
-
+    
+    # تنظیمات دیتاست
     dataset_mode = args.dataset_mode
     data_dir = args.data_dir
     teacher_dir = args.teacher_dir
     img_height = 512 if dataset_mode == '672k' else 256 if dataset_mode in ['rvf10k', '140k', '190k', '200k', '12.9k', '330k'] else args.img_height
     img_width = 512 if dataset_mode == '672k' else 256 if dataset_mode in ['rvf10k', '140k', '190k', '200k', '12.9k', '330k'] else args.img_width
-    batch_size = args.batch_size * torch.cuda.device_count()  # مقیاس‌دهی batch_size برای چند GPU
+    batch_size = args.batch_size
     epochs = args.epochs
-    lr = args.lr * torch.cuda.device_count()  # مقیاس‌دهی نرخ یادگیری
-
+    lr = args.lr
+    
     # بررسی وجود دایرکتوری‌ها
     if not os.path.exists(data_dir):
         raise FileNotFoundError(f"Directory {data_dir} not found!")
-    if not os.path.exists(teacher_dir):
+    if not os.path.exists(teacher_dir) and dist.get_rank() == 0:
         os.makedirs(teacher_dir)
-
+    
     # تنظیمات دیتاست
     dataset_args = {
         'dataset_mode': dataset_mode,
         'train_batch_size': batch_size,
         'eval_batch_size': batch_size,
-        'num_workers': 8,  # افزایش برای چند GPU
-        'pin_memory': True,
-        'ddp': False
+        'num_workers': args.num_workers,
+        'pin_memory': args.pin_memory,
+        'ddp': args.ddp
     }
     
     if dataset_mode == 'hardfake':
@@ -119,7 +139,7 @@ if __name__ == "__main__":
             'dataset_672k_val_label_txt': os.path.join(data_dir, 'phase1', 'valset_label.txt'),
             'dataset_672k_root_dir': os.path.join(data_dir, 'phase1')
         })
-
+    
     # بررسی وجود فایل‌های دیتاست
     if dataset_mode == '672k':
         train_label_path = dataset_args['dataset_672k_train_label_txt']
@@ -128,84 +148,76 @@ if __name__ == "__main__":
             raise FileNotFoundError(f"Train label file not found: {train_label_path}")
         if not os.path.exists(val_label_path):
             raise FileNotFoundError(f"Validation label file not found: {val_label_path}")
-
-    # بارگذاری دیتاست
+    
+    # ایجاد دیتاست
     dataset = Dataset_selector(**dataset_args)
     train_loader = dataset.loader_train
     val_loader = dataset.loader_val if hasattr(dataset, 'loader_val') else None
     test_loader = dataset.loader_test if hasattr(dataset, 'loader_test') else None
-
-    # تعریف مدل و استفاده از DataParallel
+    
+    # تعریف مدل
     model = models.resnet50(weights='IMAGENET1K_V1')
     num_ftrs = model.fc.in_features
     model.fc = nn.Linear(num_ftrs, 1)
-
-    # استفاده از DataParallel برای چند GPU
-    if torch.cuda.device_count() > 1:
-        print(f"Using {torch.cuda.device_count()} GPUs!")
-        model = nn.DataParallel(model)
-
     model = model.to(device)
-
-    # فریز کردن لایه‌ها به جز layer4 و fc
+    if args.ddp:
+        model = DDP(model, device_ids=[int(os.environ['LOCAL_RANK'])], output_device=int(os.environ['LOCAL_RANK']))
+    
     for param in model.parameters():
         param.requires_grad = False
     for param in model.layer4.parameters():
         param.requires_grad = True
     for param in model.fc.parameters():
         param.requires_grad = True
-
-    # تعریف معیار و بهینه‌ساز
+    
     criterion = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam([
-        {'params': model.module.layer4.parameters() if torch.cuda.device_count() > 1 else model.layer4.parameters(), 'lr': 1e-5},
-        {'params': model.module.fc.parameters() if torch.cuda.device_count() > 1 else model.fc.parameters(), 'lr': lr}
-    ], weight_decay=1e-4)
-
-    # تنظیم GradScaler برای mixed-precision
+        {'params': model.layer4.parameters(), 'lr': 1e-5},
+        {'params': model.fc.parameters(), 'lr': lr}
+    ], weight_decay=args.weight_decay)
+    
     scaler = GradScaler('cuda') if device.type == 'cuda' else None
-
-    # پاکسازی حافظه GPU
+    
     if device.type == 'cuda':
         torch.cuda.empty_cache()
-
-    # مسیر ذخیره مدل
+    
     best_val_acc = 0.0
     best_model_path = os.path.join(teacher_dir, 'teacher_model_best.pth')
-
-    # حلقه آموزش
+    
     for epoch in range(epochs):
         model.train()
+        if args.ddp:
+            train_loader.sampler.set_epoch(epoch) 
         running_loss = 0.0
         correct_train = 0
         total_train = 0
         for images, labels in train_loader:
             images = images.to(device)
             labels = labels.to(device).float()
-
+            
             optimizer.zero_grad()
             with autocast('cuda', enabled=device.type == 'cuda'):
                 outputs = model(images).squeeze(1)
                 loss = criterion(outputs, labels)
-
-            if device.type == 'cuda':
+            
+            if scaler:
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
             else:
                 loss.backward()
                 optimizer.step()
-
+            
             running_loss += loss.item()
             preds = (torch.sigmoid(outputs) > 0.5).float()
             correct_train += (preds == labels).sum().item()
             total_train += labels.size(0)
-
+        
         train_loss = running_loss / len(train_loader)
         train_accuracy = 100 * correct_train / total_train
-        print(f'Epoch {epoch+1}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%')
-
-        # اعتبارسنجی
+        if dist.get_rank() == 0:
+            print(f'Epoch {epoch+1}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%')
+        
         if val_loader:
             model.eval()
             val_loss = 0.0
@@ -215,7 +227,7 @@ if __name__ == "__main__":
                 for images, labels in val_loader:
                     images = images.to(device)
                     labels = labels.to(device).float()
-
+                    
                     with autocast('cuda', enabled=device.type == 'cuda'):
                         outputs = model(images).squeeze(1)
                         loss = criterion(outputs, labels)
@@ -223,21 +235,21 @@ if __name__ == "__main__":
                     preds = (torch.sigmoid(outputs) > 0.5).float()
                     correct_val += (preds == labels).sum().item()
                     total_val += labels.size(0)
-
+            
             val_loss = val_loss / len(val_loader)
             val_accuracy = 100 * correct_val / total_val
-            print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%')
+            if dist.get_rank() == 0:
+                print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%')
+                
+                if val_accuracy > best_val_acc:
+                    best_val_acc = val_accuracy
+                    torch.save(model.module.state_dict() if args.ddp else model.state_dict(), best_model_path)
+                    print(f'Saved best model with validation accuracy: {val_accuracy:.2f}% at epoch {epoch+1}')
+    
+    if dist.get_rank() == 0:
+        torch.save(model.module.state_dict() if args.ddp else model.state_dict(), os.path.join(teacher_dir, 'teacher_model_final.pth'))
+        print(f'Saved final model at epoch {epochs}')
 
-            if val_accuracy > best_val_acc:
-                best_val_acc = val_accuracy
-                torch.save(model.state_dict(), best_model_path)
-                print(f'Saved best model with validation accuracy: {val_accuracy:.2f}% at epoch {epoch+1}')
-
-    # ذخیره مدل نهایی
-    torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model_final.pth'))
-    print(f'Saved final model at epoch {epochs}')
-
-    # تست
     if test_loader:
         model.eval()
         test_loss = 0.0
@@ -247,7 +259,7 @@ if __name__ == "__main__":
             for images, labels in test_loader:
                 images = images.to(device)
                 labels = labels.to(device).float()
-
+                
                 with autocast('cuda', enabled=device.type == 'cuda'):
                     outputs = model(images).squeeze(1)
                     loss = criterion(outputs, labels)
@@ -257,24 +269,24 @@ if __name__ == "__main__":
                 total += labels.size(0)
         test_loss = test_loss / len(test_loader)
         test_accuracy = 100 * correct / total
-        print(f'Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.2f}%')
-
-    # نمایش نمونه‌های تست
-    if test_loader:
+        if dist.get_rank() == 0:
+            print(f'Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.2f}%')
+    
+    if test_loader and dist.get_rank() == 0:
         if dataset_mode == '672k':
             mean = [0.5058, 0.4068, 0.3562]
             std = [0.2583, 0.2304, 0.2226]
         else:
             mean = [0.485, 0.456, 0.406]
             std = [0.229, 0.224, 0.225]
-
+        
         transform_test = transforms.Compose([
             transforms.Resize((img_height, img_width)),
             transforms.ToTensor(),
             transforms.Normalize(mean=mean, std=std),
         ])
         img_column = 'path' if dataset_mode in ['rvf10k', '140k', '12.9k', '672k'] else 'filename' if dataset_mode in ['190k', '200k', '330k'] else 'images_id'
-
+        
         test_csv = os.path.join(data_dir, 'phase1', 'valset_label.txt') if dataset_mode == '672k' else os.path.join(data_dir, 'test.csv')
         if test_csv and os.path.exists(test_csv):
             if dataset_mode == '672k':
@@ -298,17 +310,17 @@ if __name__ == "__main__":
                             'original_path': rel_path,
                             'label': label
                         }])], ignore_index=True)
-
+        
         random_indices = random.sample(range(len(val_data)), min(10, len(val_data)))
         fig, axes = plt.subplots(2, 5, figsize=(15, 8))
         axes = axes.ravel()
-
+        
         with torch.no_grad():
             for i, idx in enumerate(random_indices):
                 row = val_data.iloc[idx]
                 img_name = row[img_column]
                 label = row['label']
-
+                
                 img_path = os.path.join(data_dir, img_name)
                 if not os.path.exists(img_path):
                     print(f"Warning: Image not found: {img_path}")
@@ -326,20 +338,26 @@ if __name__ == "__main__":
                 axes[i].set_title(f'True: {true_label}\nPred: {predicted_label}', fontsize=10)
                 axes[i].axis('off')
                 print(f"Image: {img_path}, True Label: {true_label}, Predicted: {predicted_label}")
-
+        
         plt.tight_layout()
         file_path = os.path.join(teacher_dir, 'test_samples.png')
         plt.savefig(file_path)
         display(IPImage(filename=file_path))
 
-    # محاسبه پیچیدگی مدل
-    for param in model.parameters():
-        param.requires_grad = True
-    flops, params = get_model_complexity_info(model, (3, img_height, img_width), as_strings=True, print_per_layer_stat=True)
-    print('FLOPs (ptflops):', flops)
-    print('Parameters (ptflops):', params)
+    if dist.get_rank() == 0:
+        for param in model.parameters():
+            param.requires_grad = True
+        flops, params = get_model_complexity_info(model.module if args.ddp else model, (3, img_height, img_width), as_strings=True, print_per_layer_stat=True)
+        print('FLOPs (ptflops):', flops)
+        print('Parameters (ptflops):', params)
+        
+        input = torch.randn(1, 3, img_height, img_width).to(device)
+        macs, params = profile(model.module if args.ddp else model, inputs=(input,))
+        print('MACs (thop):', macs)
+        print('Parameters (thop):', params)
+    
+    if args.ddp:
+        dist.destroy_process_group()
 
-    input = torch.randn(1, 3, img_height, img_width).to(device)
-    macs, params = profile(model, inputs=(input,))
-    print('MACs (thop):', macs)
-    print('Parameters (thop):', params)
+if __name__ == "__main__":
+    main()
