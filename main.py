@@ -44,8 +44,8 @@ def parse_args():
         "--dataset_mode",
         type=str,
         default="hardfake",
-        choices=("hardfake", "rvf10k", "140k", "200k", "190k", "330k", "672k"), 
-        help="Dataset to use: hardfake, rvf10k, 140k, 200k, 190k, 330k, or 672k",
+        choices=("hardfake", "rvf10k", "140k", "200k", "190k", "330k"),  # Added 330k
+        help="Dataset to use: hardfake, rvf10k, 140k, 200k, 190k, or 330k",
     )
     parser.add_argument(
         "--dataset_dir",
@@ -114,28 +114,10 @@ def parse_args():
         help="The path to the 190k dataset directory (for 190k mode)",
     )
     parser.add_argument(
-        "--realfake330k_root_dir",
+        "--realfake330k_root_dir",  # New argument for 330k
         type=str,
         default="/kaggle/input/deepfake-dataset",
         help="The path to the 330k dataset directory (for 330k mode)",
-    )
-    parser.add_argument(
-        "--dataset_672k_train_label_txt",
-        type=str,
-        default="/kaggle/input/672k/trainset_label.txt",
-        help="The path to the 672k train label text file (for 672k mode)",
-    )
-    parser.add_argument(
-        "--dataset_672k_val_label_txt",
-        type=str,
-        default="/kaggle/input/672k/valset_label.txt",
-        help="The path to the 672k validation label text file (for 672k mode)",
-    )
-    parser.add_argument(
-        "--dataset_672k_root_dir",
-        type=str,
-        default="/kaggle/input/672k",
-        help="The path to the 672k dataset directory (for 672k mode)",
     )
     parser.add_argument(
         "--num_workers",
@@ -420,13 +402,6 @@ def validate_args(args):
     elif args.dataset_mode == "330k":
         if not os.path.exists(args.realfake330k_root_dir):
             raise FileNotFoundError(f"330k dataset directory not found: {args.realfake330k_root_dir}")
-    elif args.dataset_mode == "672k":
-        if not os.path.exists(args.dataset_672k_train_label_txt):
-            raise FileNotFoundError(f"672k train label text file not found: {args.dataset_672k_train_label_txt}")
-        if not os.path.exists(args.dataset_672k_val_label_txt):
-            raise FileNotFoundError(f"672k validation label text file not found: {args.dataset_672k_val_label_txt}")
-        if not os.path.exists(args.dataset_672k_root_dir):
-            raise FileNotFoundError(f"672k dataset directory not found: {args.dataset_672k_root_dir}")
 
     if args.phase in ["train", "finetune"] and not os.path.exists(args.teacher_ckpt_path):
         raise FileNotFoundError(f"Teacher checkpoint not found: {args.teacher_ckpt_path}")
@@ -466,59 +441,6 @@ def main():
         # DALI pipeline implementation would go here
     else:
         print("Using standard PyTorch DataLoader.")
-
-    # Define dataset_args with only relevant arguments based on dataset_mode
-    dataset_args = {
-        'dataset_mode': args.dataset_mode,
-        'train_batch_size': args.train_batch_size,
-        'eval_batch_size': args.eval_batch_size,
-        'num_workers': args.num_workers,
-        'pin_memory': args.pin_memory,
-        'ddp': args.ddp,
-    }
-
-    # Add dataset-specific arguments
-    if args.dataset_mode == 'rvf10k':
-        dataset_args.update({
-            'rvf10k_train_csv': args.rvf10k_train_csv,
-            'rvf10k_valid_csv': args.rvf10k_valid_csv,
-            'rvf10k_root_dir': args.dataset_dir,
-        })
-    elif args.dataset_mode == 'hardfake':
-        dataset_args.update({
-            'hardfake_csv_file': args.hardfake_csv_file,
-            'hardfake_root_dir': args.dataset_dir,
-        })
-    elif args.dataset_mode == '140k':
-        dataset_args.update({
-            'realfake140k_train_csv': args.realfake140k_train_csv,
-            'realfake140k_valid_csv': args.realfake140k_valid_csv,
-            'realfake140k_test_csv': args.realfake140k_test_csv,
-            'realfake140k_root_dir': args.dataset_dir,
-        })
-    elif args.dataset_mode == '200k':
-        dataset_args.update({
-            'realfake200k_train_csv': args.realfake200k_train_csv,
-            'realfake200k_val_csv': args.realfake200k_valid_csv,
-            'realfake200k_test_csv': args.realfake200k_test_csv,
-            'realfake200k_root_dir': args.dataset_dir,
-        })
-    elif args.dataset_mode == '190k':
-        dataset_args.update({
-            'realfake190k_root_dir': args.realfake190k_root_dir,
-        })
-    elif args.dataset_mode == '330k':
-        dataset_args.update({
-            'realfake330k_root_dir': args.realfake330k_root_dir,
-        })
-    elif args.dataset_mode == '672k':
-        dataset_args.update({
-            'dataset_672k_train_label_txt': args.dataset_672k_train_label_txt,
-            'dataset_672k_val_label_txt': args.dataset_672k_val_label_txt,
-            'dataset_672k_root_dir': args.dataset_672k_root_dir,
-        })
-
-    dataset = Dataset_selector(**dataset_args)
 
     # Execute the corresponding phase
     if args.ddp:
