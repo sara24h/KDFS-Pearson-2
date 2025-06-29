@@ -383,7 +383,7 @@ class Dataset_selector:
                 pin_memory=pin_memory,
             )
             self.loader_val = DataLoader(
-સ
+
                 val_dataset,
                 batch_size=eval_batch_size,
                 shuffle=True,
