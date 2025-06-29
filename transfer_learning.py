@@ -19,7 +19,7 @@ import glob
 def parse_args():
     parser = argparse.ArgumentParser(description='Transfer learning with ResNet50 for fake vs real face classification.')
     parser.add_argument('--dataset_mode', type=str, required=True, 
-                        choices=['hardfake', 'rvf10k', '140k', '190k', '200k', '12.9k', '330k', '672k'],  # اضافه کردن 672k
+                        choices=['hardfake', 'rvf10k', '140k', '190k', '200k', '12.9k', '330k', '672k'],
                         help='Dataset to use: hardfake, rvf10k, 140k, 190k, 200k, 12.9k, 330k, or 672k')
     parser.add_argument('--data_dir', type=str, required=True,
                         help='Path to the dataset directory containing images and CSV file(s)')
@@ -28,7 +28,7 @@ def parse_args():
     parser.add_argument('--img_height', type=int, default=300,
                         help='Height of input images (default: 300 for hardfake, 256 for others, 512 for 672k)')
     parser.add_argument('--img_width', type=int, default=300,
-                        help='Width of input images (default: 300 for hardfake, 256 for others, 512 for 672k)')
+                        help='Width of input images (default: 300 for 672вами, 256 for others, 512 for 672k)')
     parser.add_argument('--batch_size', type=int, default=32,
                         help='Batch size for training')
     parser.add_argument('--epochs', type=int, default=15,
@@ -47,7 +47,6 @@ if __name__ == "__main__":
     dataset_mode = args.dataset_mode
     data_dir = args.data_dir
     teacher_dir = args.teacher_dir
-    # تنظیم اندازه تصویر برای دیتاست 672k
     img_height = 512 if dataset_mode == '672k' else 256 if dataset_mode in ['rvf10k', '140k', '190k', '200k', '12.9k', '330k'] else args.img_height
     img_width = 512 if dataset_mode == '672k' else 256 if dataset_mode in ['rvf10k', '140k', '190k', '200k', '12.9k', '330k'] else args.img_width
     batch_size = args.batch_size
@@ -55,6 +54,7 @@ if __name__ == "__main__":
     lr = args.lr
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+    # Check if data_dir exists
     if not os.path.exists(data_dir):
         raise FileNotFoundError(f"Directory {data_dir} not found!")
     if not os.path.exists(teacher_dir):
@@ -115,6 +115,15 @@ if __name__ == "__main__":
             'dataset_672k_val_label_txt': os.path.join(data_dir, 'valset_label.txt'),
             'dataset_672k_root_dir': data_dir
         })
+
+    # Verify dataset files exist
+    if dataset_mode == '672k':
+        train_label_path = dataset_args['dataset_672k_train_label_txt']
+        val_label_path = dataset_args['dataset_672k_val_label_txt']
+        if not os.path.exists(train_label_path):
+            raise FileNotFoundError(f"Train label file not found: {train_label_path}")
+        if not os.path.exists(val_label_path):
+            raise FileNotFoundError(f"Validation label file not found: {val_label_path}")
 
     dataset = Dataset_selector(**dataset_args)
 
@@ -231,7 +240,7 @@ if __name__ == "__main__":
         print(f'Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.2f}%')
 
     if test_loader:
-        # تنظیم mean و std برای دیتاست 672k
+        # Set mean and std for 672k dataset
         if dataset_mode == '672k':
             mean = [0.5058, 0.4068, 0.3562]
             std = [0.2583, 0.2304, 0.2226]
@@ -249,7 +258,7 @@ if __name__ == "__main__":
         test_csv = os.path.join(data_dir, 'test.csv') if dataset_mode in ['rvf10k', '140k'] else os.path.join(data_dir, 'valset_label.txt') if dataset_mode == '672k' else None
         if test_csv and os.path.exists(test_csv):
             if dataset_mode == '672k':
-                val_data = pd.read_csv(test_csv, names=['img_name', 'label'])
+                val_data = pd.read_csv(test_csv)
                 val_data['path'] = val_data['img_name'].apply(lambda x: os.path.join('valset', x))
             else:
                 val_data = pd.read_csv(test_csv)
@@ -276,7 +285,7 @@ if __name__ == "__main__":
 
         with torch.no_grad():
             for i, idx in enumerate(random_indices):
-                row = microlens_data.iloc[idx]
+                row = val_data.iloc[idx]  # Fixed: Changed microlens_data to val_data
                 img_name = row[img_column]
                 label = row['label']
 
