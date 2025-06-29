@@ -1,9 +1,8 @@
-import torch
-from torch.utils.data import Dataset, DataLoader
-import torchvision.transforms as transforms
-import os
 import pandas as pd
+import os
+from torch.utils.data import Dataset, DataLoader
 from PIL import Image
+import torchvision.transforms as transforms
 from sklearn.model_selection import train_test_split
 from torch.utils.data.distributed import DistributedSampler
 import glob
@@ -69,9 +68,6 @@ class Dataset_selector:
         dataset_12_9k_csv_file=None,
         dataset_12_9k_root_dir=None,
         realfake330k_root_dir=None,
-        phase1_train_label_txt=None,
-        phase1_val_label_txt=None,
-        phase1_root_dir=None,
         dataset_672k_train_label_txt=None,
         dataset_672k_val_label_txt=None,
         dataset_672k_root_dir=None,
@@ -133,7 +129,7 @@ class Dataset_selector:
             transforms.Normalize(mean=mean, std=std),
         ])
 
-        img_column = 'path' if dataset_mode in ['rvf10k', '140k', '12.9k', 'phase1', '672k'] else 'filename' if dataset_mode in ['200k', '190k', '330k'] else 'images_id'
+        img_column = 'path' if dataset_mode in ['rvf10k', '140k', '12.9k', '672k'] else 'filename' if dataset_mode in ['200k', '190k', '330k'] else 'images_id'
         
         if dataset_mode == 'rvf10k':
             if not rvf10k_train_csv or not rvf10k_valid_csv or not rvf10k_root_dir:
@@ -295,45 +291,15 @@ class Dataset_selector:
             val_data = val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
             test_data = test_data.sample(frac=1, random_state=3407).reset_index(drop=False)
 
-        elif dataset_mode == 'phase1':
-            if not phase1_train_label_txt or not phase1_val_label_txt or not phase1_root_dir:
-                raise ValueError("phase1_train_label_txt, phase1_val_label_txt, and phase1_root_dir must be provided")
-            print(f"Loading train labels from: {phase1_train_label_txt}")
-            print(f"Loading valid labels from: {phase1_val_label_txt}")
-
-            train_data = pd.read_csv(phase1_train_label_txt, names=['img_name', 'label'])
-            valid_data = pd.read_csv(phase1_val_label_txt, names=['img_name', 'label'])
-            root_dir = phase1_root_dir
-
-            def create_image_path(row, split='trainset'):
-                folder = 'trainset' if split == 'trainset' else 'valset'
-                return os.path.join(folder, row['img_name'])
-
-            train_data['path'] = train_data.apply(lambda row: create_image_path(row, 'trainset'), axis=1)
-            valid_data['path'] = valid_data.apply(lambda row: create_image_path(row, 'valset'), axis=1)
-
-            print("Sample train paths:", train_data['path'].head().tolist())
-            print("Sample valid paths:", valid_data['path'].head().tolist())
-
-            for path in train_data['path'].head():
-                full_path = os.path.join(root_dir, path)
-                print(f"Checking train image {full_path}: {'Exists' if os.path.exists(full_path) else 'Not Found'}")
-            for path in valid_data['path'].head():
-                full_path = os.path.join(root_dir, path)
-                print(f"Checking valid image {full_path}: {'Exists' if os.path.exists(full_path) else 'Not Found'}")
-
-            val_data, test_data = train_test_split(
-                valid_data, test_size=0.5, stratify=valid_data['label'], random_state=3407
-            )
-
         elif dataset_mode == '672k':
             if not dataset_672k_train_label_txt or not dataset_672k_val_label_txt or not dataset_672k_root_dir:
                 raise ValueError("dataset_672k_train_label_txt, dataset_672k_val_label_txt, and dataset_672k_root_dir must be provided")
             print(f"Loading train labels from: {dataset_672k_train_label_txt}")
             print(f"Loading valid labels from: {dataset_672k_val_label_txt}")
 
-            train_data = pd.read_csv(dataset_672k_train_label_txt, names=['img_name', 'label'])
-            valid_data = pd.read_csv(dataset_672k_val_label_txt, names=['img_name', 'label'])
+            # Load CSV files with headers
+            train_data = pd.read_csv(dataset_672k_train_label_txt)
+            valid_data = pd.read_csv(dataset_672k_val_label_txt)
             root_dir = dataset_672k_root_dir
 
             def create_image_path(row, split='trainset'):
@@ -343,6 +309,10 @@ class Dataset_selector:
             train_data['path'] = train_data.apply(lambda row: create_image_path(row, 'trainset'), axis=1)
             valid_data['path'] = valid_data.apply(lambda row: create_image_path(row, 'valset'), axis=1)
 
+            # Rename 'target' column to 'label' for consistency
+            train_data = train_data.rename(columns={'target': 'label'})
+            valid_data = valid_data.rename(columns={'target': 'label'})
+
             print("Sample train paths:", train_data['path'].head().tolist())
             print("Sample valid paths:", valid_data['path'].head().tolist())
 
@@ -357,7 +327,7 @@ class Dataset_selector:
                 valid_data, test_size=0.5, stratify=valid_data['label'], random_state=3407
             )
 
-        # ریست کردن اندیس‌ها
+        # Reset indices
         train_data = train_data.reset_index(drop=True)
         val_data = val_data.reset_index(drop=True)
         test_data = test_data.reset_index(drop=True)
@@ -377,7 +347,7 @@ class Dataset_selector:
         val_dataset = FaceDataset(val_data, root_dir, transform=transform_test, img_column=img_column)
         test_dataset = FaceDataset(test_data, root_dir, transform=transform_test, img_column=img_column)
 
-        # تنظیم DataLoader
+        # Set up DataLoader
         if ddp:
             train_sampler = DistributedSampler(train_dataset, shuffle=True)
             val_sampler = DistributedSampler(val_dataset, shuffle=True)
@@ -413,6 +383,7 @@ class Dataset_selector:
                 pin_memory=pin_memory,
             )
             self.loader_val = DataLoader(
+સ
                 val_dataset,
                 batch_size=eval_batch_size,
                 shuffle=True,
@@ -439,80 +410,3 @@ class Dataset_selector:
                 print(f"{name} batch label distribution: {torch.bincount(sample[1].int())}")
             except Exception as e:
                 print(f"Error loading sample {name} batch: {e}")
-
-if __name__ == "__main__":
-    dataset_hardfake = Dataset_selector(
-        dataset_mode='hardfake',
-        hardfake_csv_file='/kaggle/input/hardfakevsrealfaces/data.csv',
-        hardfake_root_dir='/kaggle/input/hardfakevsrealfaces',
-        train_batch_size=256,
-        eval_batch_size=128,
-        ddp=True,
-    )
-
-    dataset_rvf10k = Dataset_selector(
-        dataset_mode='rvf10k',
-        rvf10k_train_csv='/kaggle/input/rvf10k/train.csv',
-        rvf10k_valid_csv='/kaggle/input/rvf10k/valid.csv',
-        rvf10k_root_dir='/kaggle/input/rvf10k',
-        train_batch_size=256,
-        eval_batch_size=128,
-        ddp=True,
-    )
-
-    dataset_140k = Dataset_selector(
-        dataset_mode='140k',
-        realfake140k_train_csv='/kaggle/input/140k-real-and-fake-faces/train.csv',
-        realfake140k_valid_csv='/kaggle/input/140k-real-and-fake-faces/valid.csv',
-        realfake140k_test_csv='/kaggle/input/140k-real-and-fake-faces/test.csv',
-        realfake140k_root_dir='/kaggle/input/140k-real-and-fake-faces',
-        train_batch_size=256,
-        eval_batch_size=128,
-        ddp=True,
-    )
-
-    dataset_200k = Dataset_selector(
-        dataset_mode='200k',
-        realfake200k_train_csv='/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/train_labels.csv',
-        realfake200k_val_csv='/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/val_labels.csv',
-        realfake200k_test_csv='/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/test_labels.csv',
-        realfake200k_root_dir='/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/my_real_vs_ai_dataset',
-        train_batch_size=128,
-        eval_batch_size=128,
-        ddp=True,
-    )
-
-    dataset_190k = Dataset_selector(
-        dataset_mode='190k',
-        realfake190k_root_dir='/kaggle/input/deepfake-and-real-images',
-        train_batch_size=128,
-        eval_batch_size=128,
-        ddp=True,
-    )
-
-    dataset_12_9k = Dataset_selector(
-        dataset_mode='12.9k',
-        dataset_12_9k_csv_file='/kaggle/input/deepfake-face-images/dataset.csv',
-        dataset_12_9k_root_dir='/kaggle/input/deepfake-face-images',
-        train_batch_size=128,
-        eval_batch_size=128,
-        ddp=True,
-    )
-
-    dataset_330k = Dataset_selector(
-        dataset_mode='330k',
-        realfake330k_root_dir='/kaggle/input/deepfake-dataset',
-        train_batch_size=128,
-        eval_batch_size=128,
-        ddp=True,
-    )
-
-    dataset_672k = Dataset_selector(
-        dataset_mode='672k',
-        dataset_672k_train_label_txt='/kaggle/input/672k/trainset_label.txt',
-        dataset_672k_val_label_txt='/kaggle/input/672k/valset_label.txt',
-        dataset_672k_root_dir='/kaggle/input/672k',
-        train_batch_size=128,
-        eval_batch_size=128,
-        ddp=True,
-    )
