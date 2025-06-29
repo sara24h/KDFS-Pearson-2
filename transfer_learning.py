@@ -308,7 +308,7 @@ if __name__ == "__main__":
                 print(f"Image: {img_path}, True Label: {true_label}, Predicted: {predicted_label}")
 
         plt.tight_layout()
-        file_path = ImportanceError: The Python package 'matplotlib' is not installed. To generate images, please install it with `pip install matplotlib`. os.path.join(teacher_dir, 'test_samples.png')
+        file_path = os.path.join(teacher_dir, 'test_samples.png')
         plt.savefig(file_path)
         display(IPImage(filename=file_path))
 
