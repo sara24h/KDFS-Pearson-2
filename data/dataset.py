@@ -7,6 +7,8 @@ from sklearn.model_selection import train_test_split
 from torch.utils.data.distributed import DistributedSampler
 import glob
 import torch
+import torchvision.transforms as transforms
+
 
 class FaceDataset(Dataset):
     def __init__(self, data_frame, root_dir, transform=None, img_column='filename'):
