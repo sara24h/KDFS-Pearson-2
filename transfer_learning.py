@@ -19,16 +19,16 @@ import glob
 def parse_args():
     parser = argparse.ArgumentParser(description='Transfer learning with ResNet50 for fake vs real face classification.')
     parser.add_argument('--dataset_mode', type=str, required=True, 
-                        choices=['hardfake', 'rvf10k', '140k', '190k', '200k', '12.9k', '330k'],
-                        help='Dataset to use: hardfake, rvf10k, 140k, 190k, 200k, 12.9k, or 330k')
+                        choices=['hardfake', 'rvf10k', '140k', '190k', '200k', '12.9k', '330k', '672k'],  # اضافه کردن 672k
+                        help='Dataset to use: hardfake, rvf10k, 140k, 190k, 200k, 12.9k, 330k, or 672k')
     parser.add_argument('--data_dir', type=str, required=True,
                         help='Path to the dataset directory containing images and CSV file(s)')
     parser.add_argument('--teacher_dir', type=str, default='teacher_dir',
                         help='Directory to save the trained model and outputs')
     parser.add_argument('--img_height', type=int, default=300,
-                        help='Height of input images (default: 300 for hardfake, 256 for others)')
+                        help='Height of input images (default: 300 for hardfake, 256 for others, 512 for 672k)')
     parser.add_argument('--img_width', type=int, default=300,
-                        help='Width of input images (default: 300 for hardfake, 256 for others)')
+                        help='Width of input images (default: 300 for hardfake, 256 for others, 512 for 672k)')
     parser.add_argument('--batch_size', type=int, default=32,
                         help='Batch size for training')
     parser.add_argument('--epochs', type=int, default=15,
@@ -47,8 +47,9 @@ if __name__ == "__main__":
     dataset_mode = args.dataset_mode
     data_dir = args.data_dir
     teacher_dir = args.teacher_dir
-    img_height = 256 if dataset_mode in ['rvf10k', '140k', '190k', '200k', '12.9k', '330k'] else args.img_height
-    img_width = 256 if dataset_mode in ['rvf10k', '140k', '190k', '200k', '12.9k', '330k'] else args.img_width
+    # تنظیم اندازه تصویر برای دیتاست 672k
+    img_height = 512 if dataset_mode == '672k' else 256 if dataset_mode in ['rvf10k', '140k', '190k', '200k', '12.9k', '330k'] else args.img_height
+    img_width = 512 if dataset_mode == '672k' else 256 if dataset_mode in ['rvf10k', '140k', '190k', '200k', '12.9k', '330k'] else args.img_width
     batch_size = args.batch_size
     epochs = args.epochs
     lr = args.lr
@@ -78,7 +79,7 @@ if __name__ == "__main__":
         dataset_args.update({
             'rvf10k_train_csv': os.path.join(data_dir, 'train.csv'),
             'rvf10k_valid_csv': os.path.join(data_dir, 'valid.csv'),
-            'rvf10k_test_csv': os.path.join(data_dir, 'test.csv'),  # Optional test.csv
+            'rvf10k_test_csv': os.path.join(data_dir, 'test.csv'),
             'rvf10k_root_dir': data_dir
         })
     elif dataset_mode == '140k':
@@ -107,6 +108,12 @@ if __name__ == "__main__":
     elif dataset_mode == '330k':
         dataset_args.update({
             'realfake330k_root_dir': data_dir
+        })
+    elif dataset_mode == '672k':
+        dataset_args.update({
+            'dataset_672k_train_label_txt': os.path.join(data_dir, 'trainset_label.txt'),
+            'dataset_672k_val_label_txt': os.path.join(data_dir, 'valset_label.txt'),
+            'dataset_672k_root_dir': data_dir
         })
 
     dataset = Dataset_selector(**dataset_args)
@@ -224,21 +231,33 @@ if __name__ == "__main__":
         print(f'Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.2f}%')
 
     if test_loader:
+        # تنظیم mean و std برای دیتاست 672k
+        if dataset_mode == '672k':
+            mean = [0.5058, 0.4068, 0.3562]
+            std = [0.2583, 0.2304, 0.2226]
+        else:
+            mean = [0.485, 0.456, 0.406]
+            std = [0.229, 0.224, 0.225]
+
         transform_test = transforms.Compose([
             transforms.Resize((img_height, img_width)),
             transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            transforms.Normalize(mean=mean, std=std),
         ])
-        img_column = 'filename' if dataset_mode in ['190k', '200k', '330k'] else 'path' if dataset_mode in ['140k', '12.9k'] else 'images_id'
+        img_column = 'path' if dataset_mode in ['rvf10k', '140k', '12.9k', '672k'] else 'filename' if dataset_mode in ['190k', '200k', '330k'] else 'images_id'
 
-        test_csv = os.path.join(data_dir, 'test.csv') if dataset_mode in ['rvf10k', '140k'] else None
+        test_csv = os.path.join(data_dir, 'test.csv') if dataset_mode in ['rvf10k', '140k'] else os.path.join(data_dir, 'valset_label.txt') if dataset_mode == '672k' else None
         if test_csv and os.path.exists(test_csv):
-            val_data = pd.read_csv(test_csv)
+            if dataset_mode == '672k':
+                val_data = pd.read_csv(test_csv, names=['img_name', 'label'])
+                val_data['path'] = val_data['img_name'].apply(lambda x: os.path.join('valset', x))
+            else:
+                val_data = pd.read_csv(test_csv)
         else:
             val_data = pd.DataFrame({
                 'filename': [], 'label': [], img_column: [], 'original_path': []
             })
-            test_path = os.path.join(data_dir, 'test')
+            test_path = os.path.join(data_dir, 'test') if dataset_mode != '672k' else os.path.join(data_dir, 'valset')
             for label, folder in [(1, 'real'), (0, 'fake')]:
                 folder_path = os.path.join(test_path, folder)
                 if os.path.exists(folder_path):
@@ -257,7 +276,7 @@ if __name__ == "__main__":
 
         with torch.no_grad():
             for i, idx in enumerate(random_indices):
-                row = val_data.iloc[idx]
+                row = microlens_data.iloc[idx]
                 img_name = row[img_column]
                 label = row['label']
 
