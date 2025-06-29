@@ -28,7 +28,7 @@ def parse_args():
     parser.add_argument('--img_height', type=int, default=300,
                         help='Height of input images (default: 300 for hardfake, 256 for others, 512 for 672k)')
     parser.add_argument('--img_width', type=int, default=300,
-                        help='Width of input images (default: 300 for 672вами, 256 for others, 512 for 672k)')
+                        help='Width of input images (default: 300 for hardfake, 256 for others, 512 for 672k)')
     parser.add_argument('--batch_size', type=int, default=32,
                         help='Batch size for training')
     parser.add_argument('--epochs', type=int, default=15,
@@ -111,9 +111,9 @@ if __name__ == "__main__":
         })
     elif dataset_mode == '672k':
         dataset_args.update({
-            'dataset_672k_train_label_txt': os.path.join(data_dir, 'trainset_label.txt'),
-            'dataset_672k_val_label_txt': os.path.join(data_dir, 'valset_label.txt'),
-            'dataset_672k_root_dir': data_dir
+            'dataset_672k_train_label_txt': os.path.join(data_dir, 'phase1', 'trainset_label.txt'),
+            'dataset_672k_val_label_txt': os.path.join(data_dir, 'phase1', 'valset_label.txt'),
+            'dataset_672k_root_dir': os.path.join(data_dir, 'phase1')
         })
 
     # Verify dataset files exist
@@ -255,18 +255,18 @@ if __name__ == "__main__":
         ])
         img_column = 'path' if dataset_mode in ['rvf10k', '140k', '12.9k', '672k'] else 'filename' if dataset_mode in ['190k', '200k', '330k'] else 'images_id'
 
-        test_csv = os.path.join(data_dir, 'test.csv') if dataset_mode in ['rvf10k', '140k'] else os.path.join(data_dir, 'valset_label.txt') if dataset_mode == '672k' else None
+        test_csv = os.path.join(data_dir, 'phase1', 'valset_label.txt') if dataset_mode == '672k' else os.path.join(data_dir, 'test.csv')
         if test_csv and os.path.exists(test_csv):
             if dataset_mode == '672k':
                 val_data = pd.read_csv(test_csv)
-                val_data['path'] = val_data['img_name'].apply(lambda x: os.path.join('valset', x))
+                val_data['path'] = val_data['img_name'].apply(lambda x: os.path.join('phase1', 'valset', x))
             else:
                 val_data = pd.read_csv(test_csv)
         else:
             val_data = pd.DataFrame({
                 'filename': [], 'label': [], img_column: [], 'original_path': []
             })
-            test_path = os.path.join(data_dir, 'test') if dataset_mode != '672k' else os.path.join(data_dir, 'valset')
+            test_path = os.path.join(data_dir, 'phase1', 'valset') if dataset_mode == '672k' else os.path.join(data_dir, 'test')
             for label, folder in [(1, 'real'), (0, 'fake')]:
                 folder_path = os.path.join(test_path, folder)
                 if os.path.exists(folder_path):
@@ -285,7 +285,7 @@ if __name__ == "__main__":
 
         with torch.no_grad():
             for i, idx in enumerate(random_indices):
-                row = val_data.iloc[idx]  # Fixed: Changed microlens_data to val_data
+                row = val_data.iloc[idx]
                 img_name = row[img_column]
                 label = row['label']
 
@@ -308,7 +308,7 @@ if __name__ == "__main__":
                 print(f"Image: {img_path}, True Label: {true_label}, Predicted: {predicted_label}")
 
         plt.tight_layout()
-        file_path = os.path.join(teacher_dir, 'test_samples.png')
+        file_path = ImportanceError: The Python package 'matplotlib' is not installed. To generate images, please install it with `pip install matplotlib`. os.path.join(teacher_dir, 'test_samples.png')
         plt.savefig(file_path)
         display(IPImage(filename=file_path))
 
