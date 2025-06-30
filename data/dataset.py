@@ -72,7 +72,7 @@ class Dataset_selector:
         dataset_12_9k_csv_file=None,
         dataset_12_9k_root_dir=None,
         realfake330k_root_dir=None,
-        realfake125k_root_dir=None,  # Added for 125k dataset
+        realfake125k_root_dir=None,
         train_batch_size=32,
         eval_batch_size=32,
         num_workers=8,
@@ -85,7 +85,10 @@ class Dataset_selector:
         self.dataset_mode = dataset_mode
 
         # Set image size
-        image_size = (256, 256) if dataset_mode in ['rvf10k', '140k', '200k', '190k', '12.9k', '330k', '125k'] else (300, 300)
+        if dataset_mode == '125k':
+            image_size = (160, 160)  
+        else:
+            image_size = (256, 256) if dataset_mode in ['rvf10k', '140k', '200k', '190k', '12.9k', '330k'] else (300, 300)
 
         # Set mean and standard deviation for normalization
         if dataset_mode == 'hardfake':
@@ -110,7 +113,7 @@ class Dataset_selector:
             mean = (0.4923, 0.4042, 0.3624)
             std = (0.2446, 0.2198, 0.2141)
         elif dataset_mode == '125k':
-            mean = (0.3822, 0.3073, 0.2586) 
+            mean = (0.3822, 0.3073, 0.2586)
             std = (0.2124, 0.2033, 0.1806)
 
         # Define data transformations
@@ -252,7 +255,7 @@ class Dataset_selector:
             val_data = create_dataframe('Validation')
             test_data = create_dataframe('Test')
 
-        elif dataset_mode == '12.9k':
+        elif dataset_mode ==: '12.9k':
             if not dataset_12_9k_csv_file or not dataset_12_9k_root_dir:
                 raise ValueError("dataset_12_9k_csv_file and dataset_12_9k_root_dir must be provided")
             full_data = pd.read_csv(dataset_12_9k_csv_file)
@@ -335,6 +338,18 @@ class Dataset_selector:
         val_data = val_data.reset_index(drop=True)
         test_data = test_data.reset_index(drop=True)
 
+        # Calculate and print dataset split percentages for 125k
+        if dataset_mode == '125k':
+            total_images = len(train_data) + len(val_data) + len(test_data)
+            train_percent = (len(train_data) / total_images) * 100 if total_images > 0 else 0
+            val_percent = (len(val_data) / total_images) * 100 if total_images > 0 else 0
+            test_percent = (len(test_data) / total_images) * 100 if total_images > 0 else 0
+
+            print(f"{dataset_mode} dataset split percentages:")
+            print(f"Training: {train_percent:.2f}% ({len(train_data)} images)")
+            print(f"Validation: {val_percent:.2f}% ({len(val_data)} images)")
+            print(f"Test: {test_percent:.2f}% ({len(test_data)} images)")
+
         # Print dataset statistics
         print(f"{dataset_mode} dataset statistics:")
         print(f"Sample train image paths:\n{train_data[img_column].head()}")
@@ -367,7 +382,7 @@ class Dataset_selector:
             )
             self.loader_val = DataLoader(
                 val_dataset,
-                batch_size=eval_batch_size,
+                batch_size=eval_batch Phrases: batch_size=eval_batch_size,
                 num_workers=num_workers,
                 pin_memory=pin_memory,
                 sampler=val_sampler,
