@@ -20,7 +20,7 @@ def parse_args():
     parser.add_argument('--dataset_mode', type=str, required=True, choices=['hardfake', 'rvf10k', '140k', '200k', '125k'],
                         help='Dataset to use: hardfake, rvf10k, 140k, 200k, or 125k')
     parser.add_argument('--data_dir', type=str, required=True,
-                        help='Path to the dataset directory containing images and CSV file(s)')
+                        help='Path to the dataset directory containing images')
     parser.add_argument('--teacher_dir', type=str, default='teacher_dir',
                         help='Directory to save the trained model and outputs')
     parser.add_argument('--img_height', type=int, default=300,
@@ -44,7 +44,7 @@ torch.backends.cudnn.enabled = True
 dataset_mode = args.dataset_mode
 data_dir = args.data_dir
 teacher_dir = args.teacher_dir
-# Set image dimensions for 125k dataset
+# تنظیم ابعاد تصویر برای دیتاست 125k
 img_height = 160 if dataset_mode == '125k' else 256 if dataset_mode in ['rvf10k', '140k', '200k'] else args.img_height
 img_width = 160 if dataset_mode == '125k' else 256 if dataset_mode in ['rvf10k', '140k', '200k'] else args.img_width
 batch_size = args.batch_size
@@ -52,12 +52,13 @@ epochs = args.epochs
 lr = args.lr
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+# بررسی وجود پوشه‌ها
 if not os.path.exists(data_dir):
     raise FileNotFoundError(f"Directory {data_dir} not found!")
 if not os.path.exists(teacher_dir):
     os.makedirs(teacher_dir)
 
-# Helper function to create DataFrame from directory structure
+# تابع برای ایجاد DataFrame از ساختار پوشه‌ها
 def create_dataframe_from_dir(root_dir, subdirs=['fake', 'real']):
     data = []
     for subdir in subdirs:
@@ -67,11 +68,11 @@ def create_dataframe_from_dir(root_dir, subdirs=['fake', 'real']):
         label = 1 if subdir == 'real' else 0
         for img_name in os.listdir(subdir_path):
             if img_name.lower().endswith(('.png', '.jpg', '.jpeg')):
-                # Store relative path from root_dir
-                rel_path = os.path.join(subdir, img_name)
+                rel_path = os.path.join(subdir, img_name)  # مسیر نسبی
                 data.append({'path': rel_path, 'label': label})
     return pd.DataFrame(data)
 
+# انتخاب دیتاست
 if dataset_mode == 'hardfake':
     dataset = Dataset_selector(
         dataset_mode='hardfake',
@@ -122,7 +123,6 @@ elif dataset_mode == '200k':
         ddp=False
     )
 elif dataset_mode == '125k':
-    # Check if CSV files exist; if not, create DataFrames from directory structure
     train_csv = os.path.join(data_dir, 'train.csv')
     valid_csv = os.path.join(data_dir, 'valid.csv')
     test_csv = os.path.join(data_dir, 'test.csv')
@@ -133,7 +133,7 @@ elif dataset_mode == '125k':
             realfake125k_train_csv=train_csv,
             realfake125k_valid_csv=valid_csv,
             realfake125k_test_csv=test_csv if os.path.exists(test_csv) else valid_csv,
-            realfake125k_root_dir=os.path.join(data_dir, '125k'),
+            realfake125k_root_dir=data_dir,  # مسیر ریشه دیتاست
             train_batch_size=batch_size,
             eval_batch_size=batch_size,
             num_workers=4,
@@ -141,18 +141,31 @@ elif dataset_mode == '125k':
             ddp=False
         )
     else:
-        # Create DataFrames from directory structure
-        train_df = create_dataframe_from_dir(os.path.join(data_dir, '125k', 'train'))
-        valid_df = create_dataframe_from_dir(os.path.join(data_dir, '125k', 'validation'))
-        # Use validation set as test set if no test directory is provided
-        test_df = valid_df
+        # ایجاد DataFrame از ساختار پوشه‌ها
+        train_df = create_dataframe_from_dir(os.path.join(data_dir, 'train'))
+        valid_df = create_dataframe_from_dir(os.path.join(data_dir, 'validation'))
+        test_df = valid_df  # استفاده از validation به عنوان تست
+        
+        # ذخیره DataFrame‌ها در فایل‌های CSV موقت
+        temp_train_csv = os.path.join(teacher_dir, 'temp_train.csv')
+        temp_valid_csv = os.path.join(teacher_dir, 'temp_valid.csv')
+        temp_test_csv = os.path.join(teacher_dir, 'temp_test.csv')
+        
+        train_df.to_csv(temp_train_csv, index=False)
+        valid_df.to_csv(temp_valid_csv, index=False)
+        test_df.to_csv(temp_test_csv, index=False)
+        
+        # چاپ برای دیباگ
+        print("Train DataFrame:\n", train_df.head())
+        print("Validation DataFrame:\n", valid_df.head())
+        print("Root directory:", data_dir)
         
         dataset = Dataset_selector(
             dataset_mode='125k',
-            realfake125k_train_df=train_df,
-            realfake125k_valid_df=valid_df,
-            realfake125k_test_df=test_df,
-            realfake125k_root_dir=os.path.join(data_dir, '125k'),
+            realfake125k_train_csv=temp_train_csv,
+            realfake125k_valid_csv=temp_valid_csv,
+            realfake125k_test_csv=temp_test_csv,
+            realfake125k_root_dir=data_dir,  # مسیر ریشه دیتاست
             train_batch_size=batch_size,
             eval_batch_size=batch_size,
             num_workers=4,
@@ -166,11 +179,18 @@ train_loader = dataset.loader_train
 val_loader = dataset.loader_val
 test_loader = dataset.loader_test
 
+# چاپ تعداد داده‌ها برای دیباگ
+print("Train loader size:", len(train_loader))
+print("Validation loader size:", len(val_loader))
+print("Test loader size:", len(test_loader))
+
+# تعریف مدل
 model = models.resnet50(weights='IMAGENET1K_V1')
 num_ftrs = model.fc.in_features
 model.fc = nn.Linear(num_ftrs, 1)
 model = model.to(device)
 
+# فریز کردن لایه‌ها به جز layer4 و fc
 for param in model.parameters():
     param.requires_grad = False
 for param in model.layer4.parameters():
@@ -192,6 +212,7 @@ if device.type == 'cuda':
 best_val_acc = 0.0
 best_model_path = os.path.join(teacher_dir, 'teacher_model_best.pth')
 
+# حلقه آموزش
 for epoch in range(epochs):
     model.train()
     running_loss = 0.0
@@ -223,6 +244,7 @@ for epoch in range(epochs):
     train_accuracy = 100 * correct_train / total_train
     print(f'Epoch {epoch+1}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%')
 
+    # اعتبارسنجی
     model.eval()
     val_loss = 0.0
     correct_val = 0
@@ -248,9 +270,11 @@ for epoch in range(epochs):
         torch.save(model.state_dict(), best_model_path)
         print(f'Saved best model with validation accuracy: {val_accuracy:.2f}% at epoch {epoch+1}')
 
+# ذخیره مدل نهایی
 torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model_final.pth'))
 print(f'Saved final model at epoch {epochs}')
 
+# تست مدل (با استفاده از validation به عنوان تست)
 model.eval()
 test_loss = 0.0
 correct = 0
@@ -268,22 +292,24 @@ with torch.no_grad():
         total += labels.size(0)
 print(f'Test Loss: {test_loss / len(test_loader):.4f}, Test Accuracy: {100 * correct / total:.2f}%')
 
+# آماده‌سازی داده‌ها برای visualization
 val_data = dataset.loader_test.dataset.data
 transform_test = dataset.loader_test.dataset.transform
 
-# Update image column selection for 125k dataset
+# تنظیم ستون تصویر برای 125k
 if dataset_mode == '140k':
     img_column = 'path'
 elif dataset_mode == '200k':
     img_column = 'filename'
 elif dataset_mode == '125k':
-    img_column = 'path'
+    img_column = 'path'  # فرض بر این است که FaceDataset از ستون 'path' استفاده می‌کند
 else:
     img_column = 'images_id'
 
 if img_column not in val_data.columns:
     raise KeyError(f"Column '{img_column}' not found in DataFrame. Available columns: {list(val_data.columns)}")
 
+# انتخاب نمونه‌های تصادفی برای نمایش
 random_indices = random.sample(range(len(val_data)), min(10, len(val_data)))
 fig, axes = plt.subplots(2, 5, figsize=(15, 8))
 axes = axes.ravel()
@@ -294,16 +320,8 @@ with torch.no_grad():
         img_name = row[img_column]
         label = row['label']
         
-        if dataset_mode == '140k':
-            img_path = os.path.join(data_dir, img_name)
-        elif dataset_mode == '200k':
-            subfolder = 'real' if label == 1 else 'ai_images'
-            img_path = os.path.join(data_dir, 'my_real_vs_ai_dataset', 'my_real_vs_ai_dataset', subfolder, img_name)
-        elif dataset_mode == '125k':
-            # Image path is relative to data_dir/125k
-            img_path = os.path.join(data_dir, '125k', img_name)
-        else:
-            img_path = os.path.join(data_dir, img_name)
+        # ساخت مسیر کامل تصویر
+        img_path = os.path.join(data_dir, img_name)
 
         if not os.path.exists(img_path):
             print(f"Warning: Image not found: {img_path}")
@@ -327,6 +345,7 @@ file_path = os.path.join(teacher_dir, 'test_samples.png')
 plt.savefig(file_path)
 display(IPImage(filename=file_path))
 
+# محاسبه پیچیدگی مدل
 for param in model.parameters():
     param.requires_grad = True
 
