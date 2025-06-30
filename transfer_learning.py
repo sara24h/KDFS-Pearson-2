@@ -20,7 +20,7 @@ def parse_args():
     parser.add_argument('--dataset_mode', type=str, required=True, choices=['hardfake', 'rvf10k', '140k', '200k', '125k'],
                         help='Dataset to use: hardfake, rvf10k, 140k, 200k, or 125k')
     parser.add_argument('--data_dir', type=str, required=True,
-                        help='Path to the dataset directory containing images')
+                        help='Path to the dataset directory containing images and CSV file(s)')
     parser.add_argument('--teacher_dir', type=str, default='teacher_dir',
                         help='Directory to save the trained model and outputs')
     parser.add_argument('--img_height', type=int, default=300,
@@ -44,7 +44,6 @@ torch.backends.cudnn.enabled = True
 dataset_mode = args.dataset_mode
 data_dir = args.data_dir
 teacher_dir = args.teacher_dir
-# تنظیم ابعاد تصویر برای دیتاست 125k
 img_height = 160 if dataset_mode == '125k' else 256 if dataset_mode in ['rvf10k', '140k', '200k'] else args.img_height
 img_width = 160 if dataset_mode == '125k' else 256 if dataset_mode in ['rvf10k', '140k', '200k'] else args.img_width
 batch_size = args.batch_size
@@ -68,72 +67,19 @@ def create_dataframe_from_dir(root_dir, subdirs=['fake', 'real']):
         label = 1 if subdir == 'real' else 0
         for img_name in os.listdir(subdir_path):
             if img_name.lower().endswith(('.png', '.jpg', '.jpeg')):
-                rel_path = os.path.join(subdir, img_name)  # مسیر نسبی
+                rel_path = os.path.join(subdir, img_name)
                 data.append({'path': rel_path, 'label': label})
     return pd.DataFrame(data)
 
+
 # انتخاب دیتاست
 if dataset_mode == 'hardfake':
-    dataset = Dataset_selector(
-        dataset_mode='hardfake',
-        hardfake_csv_file=os.path.join(data_dir, 'data.csv'),
-        hardfake_root_dir=data_dir,
-        train_batch_size=batch_size,
-        eval_batch_size=batch_size,
-        num_workers=4,
-        pin_memory=True,
-        ddp=False
-    )
-elif dataset_mode == 'rvf10k':
-    dataset = Dataset_selector(
-        dataset_mode='rvf10k',
-        rvf10k_train_csv=os.path.join(data_dir, 'train.csv'),
-        rvf10k_valid_csv=os.path.join(data_dir, 'valid.csv'),
-        rvf10k_root_dir=data_dir,
-        train_batch_size=batch_size,
-        eval_batch_size=batch_size,
-        num_workers=4,
-        pin_memory=True,
-        ddp=False
-    )
-elif dataset_mode == '140k':
-    dataset = Dataset_selector(
-        dataset_mode='140k',
-        realfake140k_train_csv=os.path.join(data_dir, 'train.csv'),
-        realfake140k_valid_csv=os.path.join(data_dir, 'valid.csv'),
-        realfake140k_test_csv=os.path.join(data_dir, 'test.csv'),
-        realfake140k_root_dir=data_dir,
-        train_batch_size=batch_size,
-        eval_batch_size=batch_size,
-        num_workers=4,
-        pin_memory=True,
-        ddp=False
-    )
-elif dataset_mode == '200k':
-    dataset = Dataset_selector(
-        dataset_mode='200k',
-        realfake200k_train_csv="/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/train_labels.csv",
-        realfake200k_val_csv="/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/val_labels.csv",
-        realfake200k_test_csv="/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/test_labels.csv",
-        realfake200k_root_dir=data_dir,
-        train_batch_size=batch_size,
-        eval_batch_size=batch_size,
-        num_workers=4,
-        pin_memory=True,
-        ddp=False
-    )
-elif dataset_mode == '125k':
-    train_csv = os.path.join(data_dir, 'train.csv')
-    valid_csv = os.path.join(data_dir, 'valid.csv')
-    test_csv = os.path.join(data_dir, 'test.csv')
-    
-    if os.path.exists(train_csv) and os.path.exists(valid_csv):
+    csv_file = os.path.join(data_dir, 'data.csv')
+    if os.path.exists(csv_file):
         dataset = Dataset_selector(
-            dataset_mode='125k',
-            realfake125k_train_csv=train_csv,
-            realfake125k_valid_csv=valid_csv,
-            realfake125k_test_csv=test_csv if os.path.exists(test_csv) else valid_csv,
-            realfake125k_root_dir=data_dir,  # مسیر ریشه دیتاست
+            dataset_mode='hardfake',
+            hardfake_csv_file=csv_file,
+            hardfake_root_dir=data_dir,
             train_batch_size=batch_size,
             eval_batch_size=batch_size,
             num_workers=4,
@@ -141,43 +87,193 @@ elif dataset_mode == '125k':
             ddp=False
         )
     else:
-        # ایجاد DataFrame از ساختار پوشه‌ها
-        train_df = create_dataframe_from_dir(os.path.join(data_dir, 'train'))
-        valid_df = create_dataframe_from_dir(os.path.join(data_dir, 'validation'))
-        test_df = valid_df  # استفاده از validation به عنوان تست
-        
-        # ذخیره DataFrame‌ها در فایل‌های CSV موقت
-        temp_train_csv = os.path.join(teacher_dir, 'temp_train.csv')
-        temp_valid_csv = os.path.join(teacher_dir, 'temp_valid.csv')
-        temp_test_csv = os.path.join(teacher_dir, 'temp_test.csv')
-        
-        train_df.to_csv(temp_train_csv, index=False)
-        valid_df.to_csv(temp_valid_csv, index=False)
-        test_df.to_csv(temp_test_csv, index=False)
-        
-        # چاپ برای دیباگ
-        print("Train DataFrame:\n", train_df.head())
-        print("Validation DataFrame:\n", valid_df.head())
-        print("Root directory:", data_dir)
-        
+        # ایجاد DataFrame و ذخیره به CSV موقت
+        train_df = create_dataframe_from_dir(data_dir)
+        temp_csv = os.path.join(teacher_dir, 'temp_hardfake.csv')
+        train_df.to_csv(temp_csv, index=False)
         dataset = Dataset_selector(
-            dataset_mode='125k',
-            realfake125k_train_csv=temp_train_csv,
-            realfake125k_valid_csv=temp_valid_csv,
-            realfake125k_test_csv=temp_test_csv,
-            realfake125k_root_dir=data_dir,  # مسیر ریشه دیتاست
+            dataset_mode='hardfake',
+            hardfake_csv_file=temp_csv,
+            hardfake_root_dir=data_dir,
             train_batch_size=batch_size,
             eval_batch_size=batch_size,
             num_workers=4,
             pin_memory=True,
             ddp=False
         )
+        print("Hardfake DataFrame:\n", train_df.head())
+
+elif dataset_mode == 'rvf10k':
+    train_csv = os.path.join(data_dir, 'train.csv')
+    valid_csv = os.path.join(data_dir, 'valid.csv')
+    if os.path.exists(train_csv) and os.path.exists(valid_csv):
+        dataset = Dataset_selector(
+            dataset_mode='rvf10k',
+            rvf10k_train_csv=train_csv,
+            rvf10k_valid_csv=valid_csv,
+            rvf10k_root_dir=data_dir,
+            train_batch_size=batch_size,
+            eval_batch_size=batch_size,
+            num_workers=4,
+            pin_memory=True,
+            ddp=False
+        )
+    else:
+        # ایجاد DataFrame و ذخیره به CSV موقت
+        train_df = create_dataframe_from_dir(os.path.join(data_dir, 'train'))
+        valid_df = create_dataframe_from_dir(os.path.join(data_dir, 'valid'))
+        temp_train_csv = os.path.join(teacher_dir, 'temp_train.csv')
+        temp_valid_csv = os.path.join(teacher_dir, 'temp_valid.csv')
+        train_df.to_csv(temp_train_csv, index=False)
+        valid_df.to_csv(temp_valid_csv, index=False)
+        dataset = Dataset_selector(
+            dataset_mode='rvf10k',
+            rvf10k_train_csv=temp_train_csv,
+            rvf10k_valid_csv=temp_valid_csv,
+            rvf10k_root_dir=data_dir,
+            train_batch_size=batch_size,
+            eval_batch_size=batch_size,
+            num_workers=4,
+            pin_memory=True,
+            ddp=False
+        )
+        print("RVF10k Train DataFrame:\n", train_df.head())
+        print("RVF10k Valid DataFrame:\n", valid_df.head())
+
+elif dataset_mode == '140k':
+    train_csv = os.path.join(data_dir, 'train.csv')
+    valid_csv = os.path.join(data_dir, 'valid.csv')
+    test_csv = os.path.join(data_dir, 'test.csv')
+    if os.path.exists(train_csv) and os.path.exists(valid_csv):
+        dataset = Dataset_selector(
+            dataset_mode='140k',
+            realfake140k_train_csv=train_csv,
+            realfake140k_valid_csv=valid_csv,
+            realfake140k_test_csv=test_csv if os.path.exists(test_csv) else valid_csv,
+            realfake140k_root_dir=data_dir,
+            train_batch_size=batch_size,
+            eval_batch_size=batch_size,
+            num_workers=4,
+            pin_memory=True,
+            ddp=False
+        )
+    else:
+        # ایجاد DataFrame و ذخیره به CSV موقت
+        train_df = create_dataframe_from_dir(os.path.join(data_dir, 'train'))
+        valid_df = create_dataframe_from_dir(os.path.join(data_dir, 'valid'))
+        test_df = create_dataframe_from_dir(os.path.join(data_dir, 'test')) if os.path.exists(os.path.join(data_dir, 'test')) else valid_df
+        temp_train_csv = os.path.join(teacher_dir, 'temp_train.csv')
+        temp_valid_csv = os.path.join(teacher_dir, 'temp_valid.csv')
+        temp_test_csv = os.path.join(teacher_dir, 'temp_test.csv')
+        train_df.to_csv(temp_train_csv, index=False)
+        valid_df.to_csv(temp_valid_csv, index=False)
+        test_df.to_csv(temp_test_csv, index=False)
+        dataset = Dataset_selector(
+            dataset_mode='140k',
+            realfake140k_train_csv=temp_train_csv,
+            realfake140k_valid_csv=temp_valid_csv,
+            realfake140k_test_csv=temp_test_csv,
+            realfake140k_root_dir=data_dir,
+            train_batch_size=batch_size,
+            eval_batch_size=batch_size,
+            num_workers=4,
+            pin_memory=True,
+            ddp=False
+        )
+        print("140k Train DataFrame:\n", train_df.head())
+        print("140k Valid DataFrame:\n", valid_df.head())
+        print("140k Test DataFrame:\n", test_df.head())
+
+elif dataset_mode == '200k':
+    train_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/train_labels.csv"
+    valid_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/val_labels.csv"
+    test_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/test_labels.csv"
+    if os.path.exists(train_csv) and os.path.exists(valid_csv):
+        dataset = Dataset_selector(
+            dataset_mode='200k',
+            realfake200k_train_csv=train_csv,
+            realfake200k_val_csv=valid_csv,
+            realfake200k_test_csv=test_csv if os.path.exists(test_csv) else valid_csv,
+            realfake200k_root_dir=data_dir,
+            train_batch_size=batch_size,
+            eval_batch_size=batch_size,
+            num_workers=4,
+            pin_memory=True,
+            ddp=False
+        )
+    else:
+        # ایجاد DataFrame و ذخیره به CSV موقت
+        train_df = create_dataframe_from_dir(os.path.join(data_dir, 'train'))
+        valid_df = create_dataframe_from_dir(os.path.join(data_dir, 'valid'))
+        test_df = create_dataframe_from_dir(os.path.join(data_dir, 'test')) if os.path.exists(os.path.join(data_dir, 'test')) else valid_df
+        temp_train_csv = os.path.join(teacher_dir, 'temp_train.csv')
+        temp_valid_csv = os.path.join(teacher_dir, 'temp_valid.csv')
+        temp_test_csv = os.path.join(teacher_dir, 'temp_test.csv')
+        train_df.to_csv(temp_train_csv, index=False)
+        valid_df.to_csv(temp_valid_csv, index=False)
+        test_df.to_csv(temp_test_csv, index=False)
+        dataset = Dataset_selector(
+            dataset_mode='200k',
+            realfake200k_train_csv=temp_train_csv,
+            realfake200k_val_csv=temp_valid_csv,
+            realfake200k_test_csv=temp_test_csv,
+            realfake200k_root_dir=data_dir,
+            train_batch_size=batch_size,
+            eval_batch_size=batch_size,
+            num_workers=4,
+            pin_memory=True,
+            ddp=False
+        )
+        print("200k Train DataFrame:\n", train_df.head())
+        print("200k Valid DataFrame:\n", valid_df.head())
+        print("200k Test DataFrame:\n", test_df.head())
+
+elif dataset_mode == '125k':
+    # برای 125k از FaceDataset مستقیماً استفاده می‌کنیم
+    train_df = create_dataframe_from_dir(os.path.join(data_dir, 'train'))
+    valid_df = create_dataframe_from_dir(os.path.join(data_dir, 'validation'))
+    test_df = valid_df  # استفاده از validation به عنوان تست
+
+    # چاپ برای دیباگ
+    print("125k Train DataFrame:\n", train_df.head())
+    print("125k Validation DataFrame:\n", valid_df.head())
+    print("Root directory:", data_dir)
+
+    # ایجاد دیتاست‌ها
+    train_dataset = FaceDataset(train_df, data_dir, transform=transform)
+    val_dataset = FaceDataset(valid_df, data_dir, transform=transform)
+    test_dataset = FaceDataset(test_df, data_dir, transform=transform)
+
+    # ایجاد لودرها
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=4,
+        pin_memory=True
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=4,
+        pin_memory=True
+    )
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=4,
+        pin_memory=True
+    )
 else:
     raise ValueError("Invalid dataset_mode. Choose 'hardfake', 'rvf10k', '140k', '200k', or '125k'.")
 
-train_loader = dataset.loader_train
-val_loader = dataset.loader_val
-test_loader = dataset.loader_test
+# اگر از Dataset_selector استفاده شده، لودرها را از آن بگیریم
+if dataset_mode != '125k':
+    train_loader = dataset.loader_train
+    val_loader = dataset.loader_val
+    test_loader = dataset.loader_test
 
 # چاپ تعداد داده‌ها برای دیباگ
 print("Train loader size:", len(train_loader))
@@ -274,7 +370,7 @@ for epoch in range(epochs):
 torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model_final.pth'))
 print(f'Saved final model at epoch {epochs}')
 
-# تست مدل (با استفاده از validation به عنوان تست)
+# تست مدل
 model.eval()
 test_loss = 0.0
 correct = 0
@@ -293,21 +389,22 @@ with torch.no_grad():
 print(f'Test Loss: {test_loss / len(test_loader):.4f}, Test Accuracy: {100 * correct / total:.2f}%')
 
 # آماده‌سازی داده‌ها برای visualization
-val_data = dataset.loader_test.dataset.data
-transform_test = dataset.loader_test.dataset.transform
+val_data = test_loader.dataset.data
+transform_test = test_loader.dataset.transform
 
-# تنظیم ستون تصویر برای 125k
+# تنظیم ستون تصویر
 if dataset_mode == '140k':
     img_column = 'path'
 elif dataset_mode == '200k':
     img_column = 'filename'
 elif dataset_mode == '125k':
-    img_column = 'path'  # فرض بر این است که FaceDataset از ستون 'path' استفاده می‌کند
+    img_column = 'path'
 else:
     img_column = 'images_id'
 
 if img_column not in val_data.columns:
-    raise KeyError(f"Column '{img_column}' not found in DataFrame. Available columns: {list(val_data.columns)}")
+    print(f"Warning: Column '{img_column}' not found in DataFrame. Available columns: {list(val_data.columns)}")
+    img_column = 'path'  # بازگشت به 'path' اگر ستون پیش‌فرض موجود نباشد
 
 # انتخاب نمونه‌های تصادفی برای نمایش
 random_indices = random.sample(range(len(val_data)), min(10, len(val_data)))
@@ -321,7 +418,11 @@ with torch.no_grad():
         label = row['label']
         
         # ساخت مسیر کامل تصویر
-        img_path = os.path.join(data_dir, img_name)
+        if dataset_mode == '200k':
+            subfolder = 'real' if label == 1 else 'ai_images'
+            img_path = os.path.join(data_dir, 'my_real_vs_ai_dataset', 'my_real_vs_ai_dataset', subfolder, img_name)
+        else:
+            img_path = os.path.join(data_dir, img_name)
 
         if not os.path.exists(img_path):
             print(f"Warning: Image not found: {img_path}")
