@@ -588,7 +588,7 @@ if __name__ == "__main__":
 
     dataset_125k = Dataset_selector(
         dataset_mode='125k',
-        realfake125k_root_dir='/kaggle/input/125k-real-and-fake-faces',
+        realfake125k_root_dir='/kaggle/input/dfdc-faces-of-the-train-sample',
         train_batch_size=16,
         eval_batch_size=16,
         ddp=True, 
