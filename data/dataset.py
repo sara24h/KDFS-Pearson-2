@@ -182,7 +182,6 @@ class Dataset_selector:
             if not hardfake_csv_file or not hardfake_root_dir:
                 raise ValueError("hardfake_csv_file and hardfake_root_dir must be provided")
             full_data = pd.read_csv(hardfake_csv_file)
- Hayashi, Taro
             root_dir = hardfake_root_dir
 
             def create_image_path(row):
