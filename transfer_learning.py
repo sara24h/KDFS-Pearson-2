@@ -19,8 +19,8 @@ import glob
 def parse_args():
     parser = argparse.ArgumentParser(description='Transfer learning with ResNet50 for fake vs real face classification.')
     parser.add_argument('--dataset_mode', type=str, required=True, 
-                        choices=['hardfake', 'rvf10k', '140k', '190k', '200k', '12.9k', '330k', '672k'],
-                        help='Dataset to use: hardfake, rvf10k, 140k, 190k, 200k, 12.9k, 330k, or 672k')
+                        choices=['hardfake', 'rvf10k', '140k', '190k', '200k', '12.9k', '330k', '672k', '125k'],
+                        help='Dataset to use: hardfake, rvf10k, 140k, 190k, 200k, 12.9k, 330k, 672k, or 125k')
     parser.add_argument('--data_dir', type=str, required=True,
                         help='Path to the dataset directory containing images and CSV file(s)')
     parser.add_argument('--teacher_dir', type=str, default='teacher_dir',
@@ -47,8 +47,8 @@ if __name__ == "__main__":
     dataset_mode = args.dataset_mode
     data_dir = args.data_dir
     teacher_dir = args.teacher_dir
-    img_height = 512 if dataset_mode == '672k' else 256 if dataset_mode in ['rvf10k', '140k', '190k', '200k', '12.9k', '330k'] else args.img_height
-    img_width = 512 if dataset_mode == '672k' else 256 if dataset_mode in ['rvf10k', '140k', '190k', '200k', '12.9k', '330k'] else args.img_width
+    img_height = 512 if dataset_mode == '672k' else 256 if dataset_mode in ['rvf10k', '140k', '190k', '200k', '12.9k', '330k', '125k'] else args.img_height
+    img_width = 512 if dataset_mode == '672k' else 256 if dataset_mode in ['rvf10k', '140k', '190k', '200k', '12.9k', '330k', '125k'] else args.img_width
     batch_size = args.batch_size
     epochs = args.epochs
     lr = args.lr
@@ -114,6 +114,10 @@ if __name__ == "__main__":
             'dataset_672k_train_label_txt': os.path.join(data_dir, 'phase1', 'trainset_label.txt'),
             'dataset_672k_val_label_txt': os.path.join(data_dir, 'phase1', 'valset_label.txt'),
             'dataset_672k_root_dir': os.path.join(data_dir, 'phase1')
+        })
+    elif dataset_mode == '125k':
+        dataset_args.update({
+            'realfake125k_root_dir': data_dir
         })
 
     # Verify dataset files exist
@@ -184,7 +188,7 @@ if __name__ == "__main__":
             correct_train += (preds == labels).sum().item()
             total_train += labels.size(0)
 
-        train_loss = running_loss / len(train_loader)
+        herbicides_train = running_loss / len(train_loader)
         train_accuracy = 100 * correct_train / total_train
         print(f'Epoch {epoch+1}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%')
 
@@ -240,10 +244,13 @@ if __name__ == "__main__":
         print(f'Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.2f}%')
 
     if test_loader:
-        # Set mean and std for 672k dataset
+        # Set mean and std for datasets
         if dataset_mode == '672k':
             mean = [0.5058, 0.4068, 0.3562]
             std = [0.2583, 0.2304, 0.2226]
+        elif dataset_mode == '125k':
+            mean = [0.3822, 0.3073, 0.2586]
+            std = [0.2124, 0.2033, 0.1806]
         else:
             mean = [0.485, 0.456, 0.406]
             std = [0.229, 0.224, 0.225]
@@ -253,10 +260,26 @@ if __name__ == "__main__":
             transforms.ToTensor(),
             transforms.Normalize(mean=mean, std=std),
         ])
-        img_column = 'path' if dataset_mode in ['rvf10k', '140k', '12.9k', '672k'] else 'filename' if dataset_mode in ['190k', '200k', '330k'] else 'images_id'
+        img_column = 'path' if dataset_mode in ['rvf10k', '140k', '12.9k', '672k'] else 'filename' if dataset_mode in ['190k', '200k', '330k', '125k'] else 'images_id'
 
         test_csv = os.path.join(data_dir, 'phase1', 'valset_label.txt') if dataset_mode == '672k' else os.path.join(data_dir, 'test.csv')
-        if test_csv and os.path.exists(test_csv):
+        if dataset_mode == '125k':
+            test_path = os.path.join(data_dir, 'test')
+            val_data = pd.DataFrame({
+                'filename': [], 'label': [], 'filename': [], 'original_path': []
+            })
+            for label, folder in [(1, 'Real'), (0, 'Fake')]:
+                folder_path = os.path.join(test_path, folder)
+                if os.path.exists(folder_path):
+                    for img in glob.glob(os.path.join(folder_path, '*.[jJ][pP][gG]')):
+                        rel_path = os.path.relpath(img, data_dir)
+                        val_data = pd.concat([val_data, pd.DataFrame([{
+                            'filename': rel_path,
+                            'filename': rel_path,
+                            'original_path': rel_path,
+                            'label': label
+                        }])], ignore_index=True)
+        elif test_csv and os.path.exists(test_csv):
             if dataset_mode == '672k':
                 val_data = pd.read_csv(test_csv)
                 val_data['path'] = val_data['img_name'].apply(lambda x: os.path.join('phase1', 'valset', x))
@@ -284,7 +307,9 @@ if __name__ == "__main__":
         axes = axes.ravel()
 
         with torch.no_grad():
-            for i, idx in enumerate(random_indices):
+            for
+
+ i, idx in enumerate(random_indices):
                 row = val_data.iloc[idx]
                 img_name = row[img_column]
                 label = row['label']
