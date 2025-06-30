@@ -31,7 +31,7 @@ class FinetuneDDP:
         elif self.dataset_mode == "190k":
             self.dataset_type = "190k"
         elif self.dataset_mode == "330k":
-            self.dataset_type = "330k"  # اضافه شده برای 330k
+            self.dataset_type = "330k"
         else:
             raise ValueError(f"Unknown dataset_mode: {self.dataset_mode}")
         self.num_workers = args.num_workers
@@ -60,6 +60,8 @@ class FinetuneDDP:
 
     def dist_init(self):
         """Initialize distributed training with NCCL backend."""
+        # Suppress CUDA warnings
+        os.environ["XLA_FLAGS"] = "--xla_gpu_cuda_data_dir=/usr/lib/cuda"
         dist.init_process_group("nccl")
         self.world_size = dist.get_world_size()
         self.rank = dist.get_rank()
@@ -87,9 +89,9 @@ class FinetuneDDP:
         torch.use_deterministic_algorithms(True)
         self.seed += self.rank
         random.seed(self.seed)
-        np.random.seed(self.seed)  # اصلاح self.seed_ به self.seed
+        np.random.seed(self.seed)
         torch.manual_seed(self.seed)
-        os.environ["PYTHONHASHSEED"] = str(self.seed)  # اصلاح PYTHONPATH به PYTHONHASHSEED
+        os.environ["PYTHONHASHSEED"] = str(self.seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed(self.seed)
             torch.cuda.manual_seed_all(self.seed)
@@ -99,93 +101,79 @@ class FinetuneDDP:
 
     def dataload(self):
         """Load dataset based on dataset_mode."""
+        # Common arguments for Dataset_selector
+        dataset_args = {
+            'dataset_mode': self.dataset_mode,
+            'train_batch_size': self.finetune_train_batch_size,
+            'eval_batch_size': self.finetune_eval_batch_size,
+            'num_workers': self.num_workers,
+            'pin_memory': self.pin_memory,
+            'ddp': True
+        }
+
         if self.dataset_mode == 'hardfake':
             hardfake_csv_file = os.path.join(self.dataset_dir, 'data.csv')
-            hardfake_root_dir = self.dataset_dir
-            dataset = Dataset_selector(
-                dataset_mode='hardfake',
-                hardfake_csv_file=hardfake_csv_file,
-                hardfake_root_dir=hardfake_root_dir,
-                train_batch_size=self.finetune_train_batch_size,
-                eval_batch_size=self.finetune_eval_batch_size,
-                num_workers=self.num_workers,
-                pin_memory=self.pin_memory,
-                ddp=True
-            )
+            if not os.path.exists(hardfake_csv_file):
+                raise FileNotFoundError(f"Hardfake CSV file not found: {hardfake_csv_file}")
+            dataset_args.update({
+                'csv_file': hardfake_csv_file,
+                'root_dir': self.dataset_dir
+            })
         elif self.dataset_mode == 'rvf10k':
-            rvf10k_train_csv = os.path.join(self.dataset_dir, 'train.csv')
-            rvf10k_valid_csv = os.path.join(self.dataset_dir, 'valid.csv')
-            rvf10k_root_dir = self.dataset_dir
-            dataset = Dataset_selector(
-                dataset_mode='rvf10k',
-                rvf10k_train_csv=rvf10k_train_csv,
-                rvf10k_valid_csv=rvf10k_valid_csv,
-                rvf10k_root_dir=rvf10k_root_dir,
-                train_batch_size=self.finetune_train_batch_size,
-                eval_batch_size=self.finetune_eval_batch_size,
-                num_workers=self.num_workers,
-                pin_memory=self.pin_memory,
-                ddp=True
-            )
+            train_csv = os.path.join(self.dataset_dir, 'train.csv')
+            valid_csv = os.path.join(self.dataset_dir, 'valid.csv')
+            if not os.path.exists(train_csv):
+                raise FileNotFoundError(f"RVF10K train CSV file not found: {train_csv}")
+            if not os.path.exists(valid_csv):
+                raise FileNotFoundError(f"RVF10K valid CSV file not found: {valid_csv}")
+            dataset_args.update({
+                'train_csv': train_csv,
+                'valid_csv': valid_csv,
+                'root_dir': self.dataset_dir
+            })
         elif self.dataset_mode == '140k':
-            realfake140k_train_csv = os.path.join(self.dataset_dir, 'train.csv')
-            realfake140k_valid_csv = os.path.join(self.dataset_dir, 'valid.csv')
-            realfake140k_test_csv = os.path.join(self.dataset_dir, 'test.csv')
-            realfake140k_root_dir = self.dataset_dir
-            dataset = Dataset_selector(
-                dataset_mode='140k',
-                realfake140k_train_csv=realfake140k_train_csv,
-                realfake140k_valid_csv=realfake140k_valid_csv,
-                realfake140k_test_csv=realfake140k_test_csv,
-                realfake140k_root_dir=realfake140k_root_dir,
-                train_batch_size=self.finetune_train_batch_size,
-                eval_batch_size=self.finetune_eval_batch_size,
-                num_workers=self.num_workers,
-                pin_memory=self.pin_memory,
-                ddp=True
-            )
+            train_csv = os.path.join(self.dataset_dir, 'train.csv')
+            valid_csv = os.path.join(self.dataset_dir, 'valid.csv')
+            test_csv = os.path.join(self.dataset_dir, 'test.csv')
+            if not os.path.exists(train_csv):
+                raise FileNotFoundError(f"140k train CSV file not found: {train_csv}")
+            if not os.path.exists(valid_csv):
+                raise FileNotFoundError(f"140k valid CSV file not found: {valid_csv}")
+            dataset_args.update({
+                'train_csv': train_csv,
+                'valid_csv': valid_csv,
+                'test_csv': test_csv if os.path.exists(test_csv) else None,
+                'root_dir': self.dataset_dir
+            })
         elif self.dataset_mode == '200k':
-            realfake200k_train_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/train_labels.csv"
-            realfake200k_val_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/val_labels.csv"
-            realfake200k_test_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/test_labels.csv"
-            realfake200k_root_dir = self.dataset_dir
-            dataset = Dataset_selector(
-                dataset_mode='200k',
-                realfake200k_train_csv=realfake200k_train_csv,
-                realfake200k_val_csv=realfake200k_val_csv,
-                realfake200k_test_csv=realfake200k_test_csv,
-                realfake200k_root_dir=realfake200k_root_dir,
-                train_batch_size=self.finetune_train_batch_size,
-                eval_batch_size=self.finetune_eval_batch_size,
-                num_workers=self.num_workers,
-                pin_memory=self.pin_memory,
-                ddp=True
-            )
+            train_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/train_labels.csv"
+            valid_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/val_labels.csv"
+            test_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/test_labels.csv"
+            if not os.path.exists(train_csv):
+                raise FileNotFoundError(f"200k train CSV file not found: {train_csv}")
+            if not os.path.exists(valid_csv):
+                raise FileNotFoundError(f"200k valid CSV file not found: {valid_csv}")
+            dataset_args.update({
+                'train_csv': train_csv,
+                'valid_csv': valid_csv,
+                'test_csv': test_csv if os.path.exists(test_csv) else None,
+                'root_dir': self.dataset_dir
+            })
         elif self.dataset_mode == '190k':
-            realfake190k_root_dir = self.args.realfake190k_root_dir
-            dataset = Dataset_selector(
-                dataset_mode='190k',
-                realfake190k_root_dir=realfake190k_root_dir,
-                train_batch_size=self.finetune_train_batch_size,
-                eval_batch_size=self.finetune_eval_batch_size,
-                num_workers=self.num_workers,
-                pin_memory=self.pin_memory,
-                ddp=True
-            )
+            root_dir = self.args.realfake190k_root_dir
+            if not os.path.exists(root_dir):
+                raise FileNotFoundError(f"190k root directory not found: {root_dir}")
+            dataset_args.update({'root_dir': root_dir})
         elif self.dataset_mode == '330k':
-            realfake330k_root_dir = self.args.realfake330k_root_dir
-            dataset = Dataset_selector(
-                dataset_mode='330k',
-                realfake330k_root_dir=realfake330k_root_dir,
-                train_batch_size=self.finetune_train_batch_size,
-                eval_batch_size=self.finetune_eval_batch_size,
-                num_workers=self.num_workers,
-                pin_memory=self.pin_memory,
-                ddp=True
-            )
+            root_dir = self.args.realfake330k_root_dir
+            if not os.path.exists(root_dir):
+                raise FileNotFoundError(f"330k root directory not found: {root_dir}")
+            dataset_args.update({'root_dir': root_dir})
         else:
             raise ValueError(f"Unknown dataset_mode: {self.dataset_mode}")
 
+        # Initialize dataset
+        dataset = Dataset_selector(**dataset_args)
         self.train_loader = dataset.loader_train
         self.val_loader = dataset.loader_val
         self.test_loader = dataset.loader_test
@@ -201,7 +189,6 @@ class FinetuneDDP:
             raise FileNotFoundError(f"Checkpoint file not found: {self.finetune_student_ckpt_path}")
         
         self.student = ResNet_50_sparse_hardfakevsreal()
-     
         ckpt_student = torch.load(self.finetune_student_ckpt_path, map_location="cpu", weights_only=True)
         self.student.load_state_dict(ckpt_student["student"])
         if self.rank == 0:
