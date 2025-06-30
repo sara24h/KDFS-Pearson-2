@@ -110,8 +110,8 @@ class Dataset_selector:
             mean = (0.4923, 0.4042, 0.3624)
             std = (0.2446, 0.2198, 0.2141)
         elif dataset_mode == '125k':
-            mean = (0.5207, 0.4258, 0.3806)  # Using 140k values as default
-            std = (0.2490, 0.2239, 0.2212)
+            mean = (0.3822, 0.3073, 0.2586) 
+            std = (0.2124, 0.2033, 0.1806)
 
         # Define data transformations
         transform_train = transforms.Compose([
