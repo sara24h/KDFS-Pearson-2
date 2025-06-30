@@ -182,6 +182,7 @@ class Dataset_selector:
             if not hardfake_csv_file or not hardfake_root_dir:
                 raise ValueError("hardfake_csv_file and hardfake_root_dir must be provided")
             full_data = pd.read_csv(hardfake_csv_file)
+ Hayashi, Taro
             root_dir = hardfake_root_dir
 
             def create_image_path(row):
@@ -285,6 +286,8 @@ class Dataset_selector:
                     data['filename'].append(os.path.relpath(img_path, root_dir))
                     data['label'].append(1)  # Real = 1
 
+
+
                 for img_path in glob.glob(os.path.join(fake_path, '*.jpg')):
                     data['filename'].append(os.path.relpath(img_path, root_dir))
                     data['label'].append(0)  # Fake = 0
@@ -382,7 +385,7 @@ class Dataset_selector:
             )
             self.loader_val = DataLoader(
                 val_dataset,
-                batch_size=eval_batch Phrases: batch_size=eval_batch_size,
+                batch_size=eval_batch_size,  # Fixed syntax error here
                 num_workers=num_workers,
                 pin_memory=pin_memory,
                 sampler=val_sampler,
