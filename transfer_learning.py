@@ -188,7 +188,7 @@ if __name__ == "__main__":
             correct_train += (preds == labels).sum().item()
             total_train += labels.size(0)
 
-        herbicides_train = running_loss / len(train_loader)
+        train_loss = running_loss / len(train_loader)  # Fixed variable name (was herbicides_train)
         train_accuracy = 100 * correct_train / total_train
         print(f'Epoch {epoch+1}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%')
 
@@ -307,9 +307,7 @@ if __name__ == "__main__":
         axes = axes.ravel()
 
         with torch.no_grad():
-            for
-
- i, idx in enumerate(random_indices):
+            for i, idx in enumerate(random_indices):
                 row = val_data.iloc[idx]
                 img_name = row[img_column]
                 label = row['label']
