@@ -43,7 +43,8 @@ class FaceDataset(Dataset):
         img_path = self.data[self.img_column].iloc[idx].lstrip('/')
         img_name = os.path.join(self.root_dir, img_path)
         if not os.path.exists(img_name):
-            raise FileNotFoundError(f"Image not found: {img_name}")
+            print(f"Warning: Image not found: {img_name}, returning None")
+            return None, None  # Handle this in the training loop
         image = Image.open(img_name).convert('RGB')
         label = self.label_map.get(self.data['label'].iloc[idx], self.data['label'].iloc[idx])
         if self.transform:
@@ -73,20 +74,25 @@ class Dataset_selector:
         dataset_12_9k_root_dir=None,
         realfake330k_root_dir=None,
         realfake125k_root_dir=None,
+        dataset_672k_train_label_txt=None,
+        dataset_672k_val_label_txt=None,
+        dataset_672k_root_dir=None,
         train_batch_size=32,
         eval_batch_size=32,
         num_workers=8,
         pin_memory=True,
         ddp=False,
     ):
-        if dataset_mode not in ['hardfake', 'rvf10k', '140k', '200k', '190k', '12.9k', '330k', '125k']:
-            raise ValueError("dataset_mode must be one of 'hardfake', 'rvf10k', '140k', '200k', '190k', '12.9k', '330k', '125k'")
+        if dataset_mode not in ['hardfake', 'rvf10k', '140k', '200k', '190k', '12.9k', '330k', '672k', '125k']:
+            raise ValueError("dataset_mode must be one of 'hardfake', 'rvf10k', '140k', '200k', '190k', '12.9k', '330k', '672k', '125k'")
 
         self.dataset_mode = dataset_mode
 
         # Set image size
-        if dataset_mode == '125k':
-            image_size = (160, 160)  
+        if dataset_mode == '672k':
+            image_size = (512, 512)
+        elif dataset_mode == '125k':
+            image_size = (160, 160)
         else:
             image_size = (256, 256) if dataset_mode in ['rvf10k', '140k', '200k', '190k', '12.9k', '330k'] else (300, 300)
 
@@ -112,6 +118,9 @@ class Dataset_selector:
         elif dataset_mode == '330k':
             mean = (0.4923, 0.4042, 0.3624)
             std = (0.2446, 0.2198, 0.2141)
+        elif dataset_mode == '672k':
+            mean = (0.5058, 0.4068, 0.3562)
+            std = (0.2583, 0.2304, 0.2226)
         elif dataset_mode == '125k':
             mean = (0.3822, 0.3073, 0.2586)
             std = (0.2124, 0.2033, 0.1806)
@@ -139,7 +148,7 @@ class Dataset_selector:
         ])
 
         # Select appropriate column for image paths
-        img_column = 'path' if dataset_mode in ['rvf10k', '140k', '12.9k'] else 'filename' if dataset_mode in ['200k', '190k', '330k', '125k'] else 'images_id'
+        img_column = 'path' if dataset_mode in ['rvf10k', '140k', '12.9k', '672k'] else 'filename' if dataset_mode in ['200k', '190k', '330k', '125k'] else 'images_id'
 
         # Load data based on dataset_mode
         if dataset_mode == 'rvf10k':
@@ -238,13 +247,21 @@ class Dataset_selector:
                 real_path = os.path.join(root_dir, split, 'Real')
                 fake_path = os.path.join(root_dir, split, 'Fake')
 
-                for img_path in glob.glob(os.path.join(real_path, 'real_*.jpg')):
-                    data['filename'].append(os.path.relpath(img_path, root_dir))
-                    data['label'].append(1)  # Real = 1
+                print(f"Checking real path: {real_path}")
+                print(f"Checking fake path: {fake_path}")
 
-                for img_path in glob.glob(os.path.join(fake_path, 'fake_*.jpg')):
-                    data['filename'].append(os.path.relpath(img_path, root_dir))
-                    data['label'].append(0)  # Fake = 0
+                for ext in ['*.jpg', '*.jpeg', '*.png']:
+                    real_images = glob.glob(os.path.join(real_path, ext))
+                    fake_images = glob.glob(os.path.join(fake_path, ext))
+                    print(f"Found {len(real_images)} real images in {real_path} with extension {ext}")
+                    print(f"Found {len(fake_images)} fake images in {fake_path} with extension {ext}")
+
+                    for img_path in real_images:
+                        data['filename'].append(os.path.relpath(img_path, root_dir))
+                        data['label'].append(1)  # Real = 1
+                    for img_path in fake_images:
+                        data['filename'].append(os.path.relpath(img_path, root_dir))
+                        data['label'].append(0)  # Fake = 0
 
                 df = pd.DataFrame(data)
                 if df.empty:
@@ -281,15 +298,21 @@ class Dataset_selector:
                 real_path = os.path.join(root_dir, split, 'Real')
                 fake_path = os.path.join(root_dir, split, 'Fake')
 
-                for img_path in glob.glob(os.path.join(real_path, '*.jpg')):
-                    data['filename'].append(os.path.relpath(img_path, root_dir))
-                    data['label'].append(1)  # Real = 1
+                print(f"Checking real path: {real_path}")
+                print(f"Checking fake path: {fake_path}")
 
+                for ext in ['*.jpg', '*.jpeg', '*.png']:
+                    real_images = glob.glob(os.path.join(real_path, ext))
+                    fake_images = glob.glob(os.path.join(fake_path, ext))
+                    print(f"Found {len(real_images)} real images in {real_path} with extension {ext}")
+                    print(f"Found {len(fake_images)} fake images in {fake_path} with extension {ext}")
 
-
-                for img_path in glob.glob(os.path.join(fake_path, '*.jpg')):
-                    data['filename'].append(os.path.relpath(img_path, root_dir))
-                    data['label'].append(0)  # Fake = 0
+                    for img_path in real_images:
+                        data['filename'].append(os.path.relpath(img_path, root_dir))
+                        data['label'].append(1)  # Real = 1
+                    for img_path in fake_images:
+                        data['filename'].append(os.path.relpath(img_path, root_dir))
+                        data['label'].append(0)  # Fake = 0
 
                 df = pd.DataFrame(data)
                 if df.empty:
@@ -304,6 +327,48 @@ class Dataset_selector:
             val_data = val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
             test_data = test_data.sample(frac=1, random_state=3407).reset_index(drop=True)
 
+        elif dataset_mode == '672k':
+            if not dataset_672k_train_label_txt or not dataset_672k_val_label_txt or not dataset_672k_root_dir:
+                raise ValueError("dataset_672k_train_label_txt, dataset_672k_val_label_txt, and dataset_672k_root_dir must be provided")
+            root_dir = dataset_672k_root_dir
+
+            def create_dataframe(split):
+                if split == 'train':
+                    label_file = dataset_672k_train_label_txt
+                    split_dir = 'trainset'
+                elif split == 'valid':
+                    label_file = dataset_672k_val_label_txt
+                    split_dir = 'valset'
+                else:
+                    raise ValueError(f"Unsupported split: {split}")
+
+                data = {'path': [], 'label': []}
+                label_path = os.path.join(root_dir, label_file)
+                print(f"Loading label file for {split}: {label_path}")
+
+                if not os.path.exists(label_path):
+                    raise FileNotFoundError(f"Label file not found: {label_path}")
+
+                with open(label_path, 'r') as f:
+                    for line in f:
+                        img_name, label = line.strip().split()
+                        img_path = os.path.join(split_dir, img_name)
+                        full_path = os.path.join(root_dir, img_path)
+                        if os.path.exists(full_path):
+                            data['path'].append(img_path)
+                            data['label'].append(int(label))
+                        else:
+                            print(f"Warning: Image not found: {full_path}")
+
+                df = pd.DataFrame(data)
+                if df.empty:
+                    raise ValueError(f"No valid images found in {split} directory")
+                return df
+
+            train_data = create_dataframe('train')
+            val_data = create_dataframe('valid')
+            test_data = val_data  # Use validation set as test set if no separate test set
+
         elif dataset_mode == '125k':
             if not realfake125k_root_dir:
                 raise ValueError("realfake125k_root_dir must be provided")
@@ -311,16 +376,35 @@ class Dataset_selector:
 
             def create_dataframe(split):
                 data = {'filename': [], 'label': []}
-                real_path = os.path.join(root_dir, split, 'Real')
-                fake_path = os.path.join(root_dir, split, 'Fake')
+                # Try both lowercase and capitalized split names
+                possible_splits = [split, split.capitalize()]
+                real_path = None
+                fake_path = None
+                for s in possible_splits:
+                    temp_real = os.path.join(root_dir, s, 'Real')
+                    temp_fake = os.path.join(root_dir, s, 'Fake')
+                    if os.path.exists(temp_real) or os.path.exists(temp_fake):
+                        real_path = temp_real
+                        fake_path = temp_fake
+                        break
+                else:
+                    raise FileNotFoundError(f"No valid split directory found for {split} in {root_dir}")
 
-                for img_path in glob.glob(os.path.join(real_path, '*.jpg')):
-                    data['filename'].append(os.path.relpath(img_path, root_dir))
-                    data['label'].append(1)  # Real = 1
+                print(f"Checking real path: {real_path}")
+                print(f"Checking fake path: {fake_path}")
 
-                for img_path in glob.glob(os.path.join(fake_path, '*.jpg')):
-                    data['filename'].append(os.path.relpath(img_path, root_dir))
-                    data['label'].append(0)  # Fake = 0
+                for ext in ['*.jpg', '*.jpeg', '*.png']:
+                    real_images = glob.glob(os.path.join(real_path, ext))
+                    fake_images = glob.glob(os.path.join(fake_path, ext))
+                    print(f"Found {len(real_images)} real images in {real_path} with extension {ext}")
+                    print(f"Found {len(fake_images)} fake images in {fake_path} with extension {ext}")
+
+                    for img_path in real_images:
+                        data['filename'].append(os.path.relpath(img_path, root_dir))
+                        data['label'].append(1)  # Real = 1
+                    for img_path in fake_images:
+                        data['filename'].append(os.path.relpath(img_path, root_dir))
+                        data['label'].append(0)  # Fake = 0
 
                 df = pd.DataFrame(data)
                 if df.empty:
@@ -340,17 +424,16 @@ class Dataset_selector:
         val_data = val_data.reset_index(drop=True)
         test_data = test_data.reset_index(drop=True)
 
-        # Calculate and print dataset split percentages for 125k
-        if dataset_mode == '125k':
-            total_images = len(train_data) + len(val_data) + len(test_data)
-            train_percent = (len(train_data) / total_images) * 100 if total_images > 0 else 0
-            val_percent = (len(val_data) / total_images) * 100 if total_images > 0 else 0
-            test_percent = (len(test_data) / total_images) * 100 if total_images > 0 else 0
+        # Calculate and print dataset split percentages
+        total_images = len(train_data) + len(val_data) + len(test_data)
+        train_percent = (len(train_data) / total_images) * 100 if total_images > 0 else 0
+        val_percent = (len(val_data) / total_images) * 100 if total_images > 0 else 0
+        test_percent = (len(test_data) / total_images) * 100 if total_images > 0 else 0
 
-            print(f"{dataset_mode} dataset split percentages:")
-            print(f"Training: {train_percent:.2f}% ({len(train_data)} images)")
-            print(f"Validation: {val_percent:.2f}% ({len(val_data)} images)")
-            print(f"Test: {test_percent:.2f}% ({len(test_data)} images)")
+        print(f"{dataset_mode} dataset split percentages:")
+        print(f"Training: {train_percent:.2f}% ({len(train_data)} images)")
+        print(f"Validation: {val_percent:.2f}% ({len(val_data)} images)")
+        print(f"Test: {test_percent:.2f}% ({len(test_data)} images)")
 
         # Print dataset statistics
         print(f"{dataset_mode} dataset statistics:")
@@ -384,7 +467,7 @@ class Dataset_selector:
             )
             self.loader_val = DataLoader(
                 val_dataset,
-                batch_size=eval_batch_size,  # Fixed syntax error here
+                batch_size=eval_batch_size,
                 num_workers=num_workers,
                 pin_memory=pin_memory,
                 sampler=val_sampler,
@@ -427,9 +510,12 @@ class Dataset_selector:
         for loader, name in [(self.loader_train, 'train'), (self.loader_val, 'validation'), (self.loader_test, 'test')]:
             try:
                 sample = next(iter(loader))
-                print(f"Sample {name} batch image shape: {sample[0].shape}")
-                print(f"Sample {name} batch labels: {sample[1]}")
-                print(f"{name} batch label distribution: {torch.bincount(sample[1].int())}")
+                if sample[0] is None or sample[1] is None:
+                    print(f"Warning: Sample {name} batch contains None values")
+                else:
+                    print(f"Sample {name} batch image shape: {sample[0].shape}")
+                    print(f"Sample {name} batch labels: {sample[1]}")
+                    print(f"{name} batch label distribution: {torch.bincount(sample[1].int())}")
             except Exception as e:
                 print(f"Error loading sample {name} batch: {e}")
 
@@ -503,7 +589,7 @@ if __name__ == "__main__":
     dataset_125k = Dataset_selector(
         dataset_mode='125k',
         realfake125k_root_dir='/kaggle/input/125k-real-and-fake-faces',
-        train_batch_size=128,
-        eval_batch_size=128,
-        ddp=True,
+        train_batch_size=16,
+        eval_batch_size=16,
+        ddp=True, 
     )
