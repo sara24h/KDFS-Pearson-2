@@ -179,9 +179,7 @@ class Dataset_selector:
                 print(f"Checking valid image {full_path}: {'Exists' if os.path.exists(full_path) else 'Not Found'}")
 
             if rvf10k_test_csv and os.path.exists(rvf10k_test_csv):
-                test_data = pd.read_csv
-
-(rvf10k_test_csv)
+                test_data = pd.read_csv(rvf10k_test_csv)
                 test_data['path'] = test_data.apply(lambda row: create_image_path(row, 'valid'), axis=1)
             else:
                 val_data, test_data = train_test_split(
@@ -261,7 +259,7 @@ class Dataset_selector:
                     for img_path in real_images:
                         data['filename'].append(os.path.relpath(img_path, root_dir))
                         data['label'].append(1)  # Real = 1
- THEM                    for img_path in fake_images:
+                    for img_path in fake_images:
                         data['filename'].append(os.path.relpath(img_path, root_dir))
                         data['label'].append(0)  # Fake = 0
 
@@ -533,6 +531,8 @@ class Dataset_selector:
                     print(f"{name} batch label distribution: {torch.bincount(sample[1].int())}")
             except Exception as e:
                 print(f"Error loading sample {name} batch: {e}")
+
+    
 if __name__ == "__main__":
     dataset_hardfake = Dataset_selector(
         dataset_mode='hardfake',
