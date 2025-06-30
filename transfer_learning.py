@@ -38,18 +38,15 @@ def parse_args():
 args = parse_args()
 
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-torch.backends.cudnn.benchmark = True  
+torch.backends.cudnn.benchmark = True
 torch.backends.cudnn.enabled = True
 
 dataset_mode = args.dataset_mode
 data_dir = args.data_dir
 teacher_dir = args.teacher_dir
-if dataset_mode == '125k':
-    img_height = 160
-    img_width = 160
-else:
-    img_height = 256 if dataset_mode in ['rvf10k', '140k', '200k'] else args.img_height
-    img_width = 256 if dataset_mode in ['rvf10k', '140k', '200k'] else args.img_width
+# Set image dimensions for 125k dataset
+img_height = 160 if dataset_mode == '125k' else 256 if dataset_mode in ['rvf10k', '140k', '200k'] else args.img_height
+img_width = 160 if dataset_mode == '125k' else 256 if dataset_mode in ['rvf10k', '140k', '200k'] else args.img_width
 batch_size = args.batch_size
 epochs = args.epochs
 lr = args.lr
@@ -59,6 +56,21 @@ if not os.path.exists(data_dir):
     raise FileNotFoundError(f"Directory {data_dir} not found!")
 if not os.path.exists(teacher_dir):
     os.makedirs(teacher_dir)
+
+# Helper function to create DataFrame from directory structure
+def create_dataframe_from_dir(root_dir, subdirs=['fake', 'real']):
+    data = []
+    for subdir in subdirs:
+        subdir_path = os.path.join(root_dir, subdir)
+        if not os.path.exists(subdir_path):
+            continue
+        label = 1 if subdir == 'real' else 0
+        for img_name in os.listdir(subdir_path):
+            if img_name.lower().endswith(('.png', '.jpg', '.jpeg')):
+                # Store relative path from root_dir
+                rel_path = os.path.join(subdir, img_name)
+                data.append({'path': rel_path, 'label': label})
+    return pd.DataFrame(data)
 
 if dataset_mode == 'hardfake':
     dataset = Dataset_selector(
@@ -110,18 +122,43 @@ elif dataset_mode == '200k':
         ddp=False
     )
 elif dataset_mode == '125k':
-    dataset = Dataset_selector(
-        dataset_mode='125k',
-        realfake125k_train_csv=os.path.join(data_dir, 'train.csv'),
-        realfake125k_valid_csv=os.path.join(data_dir, 'valid.csv'),
-        realfake125k_test_csv=os.path.join(data_dir, 'test.csv'),
-        realfake125k_root_dir=data_dir,
-        train_batch_size=batch_size,
-        eval_batch_size=batch_size,
-        num_workers=4,
-        pin_memory=True,
-        ddp=False
-    )
+    # Check if CSV files exist; if not, create DataFrames from directory structure
+    train_csv = os.path.join(data_dir, 'train.csv')
+    valid_csv = os.path.join(data_dir, 'valid.csv')
+    test_csv = os.path.join(data_dir, 'test.csv')
+    
+    if os.path.exists(train_csv) and os.path.exists(valid_csv):
+        dataset = Dataset_selector(
+            dataset_mode='125k',
+            realfake125k_train_csv=train_csv,
+            realfake125k_valid_csv=valid_csv,
+            realfake125k_test_csv=test_csv if os.path.exists(test_csv) else valid_csv,
+            realfake125k_root_dir=os.path.join(data_dir, '125k'),
+            train_batch_size=batch_size,
+            eval_batch_size=batch_size,
+            num_workers=4,
+            pin_memory=True,
+            ddp=False
+        )
+    else:
+        # Create DataFrames from directory structure
+        train_df = create_dataframe_from_dir(os.path.join(data_dir, '125k', 'train'))
+        valid_df = create_dataframe_from_dir(os.path.join(data_dir, '125k', 'validation'))
+        # Use validation set as test set if no test directory is provided
+        test_df = valid_df
+        
+        dataset = Dataset_selector(
+            dataset_mode='125k',
+            realfake125k_train_df=train_df,
+            realfake125k_valid_df=valid_df,
+            realfake125k_test_df=test_df,
+            realfake125k_root_dir=os.path.join(data_dir, '125k'),
+            train_batch_size=batch_size,
+            eval_batch_size=batch_size,
+            num_workers=4,
+            pin_memory=True,
+            ddp=False
+        )
 else:
     raise ValueError("Invalid dataset_mode. Choose 'hardfake', 'rvf10k', '140k', '200k', or '125k'.")
 
@@ -234,10 +271,13 @@ print(f'Test Loss: {test_loss / len(test_loader):.4f}, Test Accuracy: {100 * cor
 val_data = dataset.loader_test.dataset.data
 transform_test = dataset.loader_test.dataset.transform
 
+# Update image column selection for 125k dataset
 if dataset_mode == '140k':
     img_column = 'path'
-elif dataset_mode in ['200k', '125k']:
+elif dataset_mode == '200k':
     img_column = 'filename'
+elif dataset_mode == '125k':
+    img_column = 'path'
 else:
     img_column = 'images_id'
 
@@ -256,9 +296,12 @@ with torch.no_grad():
         
         if dataset_mode == '140k':
             img_path = os.path.join(data_dir, img_name)
-        elif dataset_mode in ['200k', '125k']:
-            subfolder = 'real' if label == 1 else 'fake'
-            img_path = os.path.join(data_dir, 'my_real_vs_ai_dataset', subfolder, img_name)
+        elif dataset_mode == '200k':
+            subfolder = 'real' if label == 1 else 'ai_images'
+            img_path = os.path.join(data_dir, 'my_real_vs_ai_dataset', 'my_real_vs_ai_dataset', subfolder, img_name)
+        elif dataset_mode == '125k':
+            # Image path is relative to data_dir/125k
+            img_path = os.path.join(data_dir, '125k', img_name)
         else:
             img_path = os.path.join(data_dir, img_name)
 
