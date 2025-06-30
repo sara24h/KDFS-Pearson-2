@@ -179,7 +179,9 @@ class Dataset_selector:
                 print(f"Checking valid image {full_path}: {'Exists' if os.path.exists(full_path) else 'Not Found'}")
 
             if rvf10k_test_csv and os.path.exists(rvf10k_test_csv):
-                test_data = pd.read_csv(rvf10k_test_csv)
+                test_data = pd.read_csv
+
+(rvf10k_test_csv)
                 test_data['path'] = test_data.apply(lambda row: create_image_path(row, 'valid'), axis=1)
             else:
                 val_data, test_data = train_test_split(
@@ -259,7 +261,7 @@ class Dataset_selector:
                     for img_path in real_images:
                         data['filename'].append(os.path.relpath(img_path, root_dir))
                         data['label'].append(1)  # Real = 1
-                    for img_path in fake_images:
+ THEM                    for img_path in fake_images:
                         data['filename'].append(os.path.relpath(img_path, root_dir))
                         data['label'].append(0)  # Fake = 0
 
@@ -376,22 +378,30 @@ class Dataset_selector:
 
             def create_dataframe(split):
                 data = {'filename': [], 'label': []}
-                # Try both lowercase and capitalized split names
                 possible_splits = [split, split.capitalize()]
                 real_path = None
                 fake_path = None
                 for s in possible_splits:
-                    temp_real = os.path.join(root_dir, s, 'Real')
-                    temp_fake = os.path.join(root_dir, s, 'Fake')
-                    if os.path.exists(temp_real) or os.path.exists(temp_fake):
-                        real_path = temp_real
-                        fake_path = temp_fake
+                    for real_folder in ['Real', 'real']:
+                        for fake_folder in ['Fake', 'fake']:
+                            temp_real = os.path.join(root_dir, s, real_folder)
+                            temp_fake = os.path.join(root_dir, s, fake_folder)
+                            print(f"Checking split: {s}, Real folder: {real_folder}, Fake folder: {fake_folder}")
+                            print(f"Real path: {temp_real}, Exists: {os.path.exists(temp_real)}")
+                            print(f"Fake path: {temp_fake}, Exists: {os.path.exists(temp_fake)}")
+                            if os.path.exists(temp_real) or os.path.exists(temp_fake):
+                                real_path = temp_real
+                                fake_path = temp_fake
+                                break
+                        if real_path and fake_path:
+                            break
+                    if real_path and fake_path:
                         break
                 else:
                     raise FileNotFoundError(f"No valid split directory found for {split} in {root_dir}")
 
-                print(f"Checking real path: {real_path}")
-                print(f"Checking fake path: {fake_path}")
+                print(f"Selected real path: {real_path}")
+                print(f"Selected fake path: {fake_path}")
 
                 for ext in ['*.jpg', '*.jpeg', '*.png']:
                     real_images = glob.glob(os.path.join(real_path, ext))
@@ -413,7 +423,12 @@ class Dataset_selector:
 
             train_data = create_dataframe('train')
             val_data = create_dataframe('validation')
-            test_data = create_dataframe('test')
+            # If test directory doesn't exist, use validation data as test data
+            try:
+                test_data = create_dataframe('test')
+            except FileNotFoundError:
+                print("Warning: Test directory not found, using validation data as test data")
+                test_data = val_data.copy()
 
             train_data = train_data.sample(frac=1, random_state=3407).reset_index(drop=True)
             val_data = val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
@@ -518,7 +533,6 @@ class Dataset_selector:
                     print(f"{name} batch label distribution: {torch.bincount(sample[1].int())}")
             except Exception as e:
                 print(f"Error loading sample {name} batch: {e}")
-
 if __name__ == "__main__":
     dataset_hardfake = Dataset_selector(
         dataset_mode='hardfake',
@@ -589,7 +603,7 @@ if __name__ == "__main__":
     dataset_125k = Dataset_selector(
         dataset_mode='125k',
         realfake125k_root_dir='/kaggle/input/dfdc-faces-of-the-train-sample',
-        train_batch_size=16,
-        eval_batch_size=16,
-        ddp=True, 
+        train_batch_size=32,
+        eval_batch_size=32,
+        ddp=False,
     )
