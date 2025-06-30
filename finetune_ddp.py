@@ -60,7 +60,6 @@ class FinetuneDDP:
 
     def dist_init(self):
         """Initialize distributed training with NCCL backend."""
-        # Suppress CUDA warnings
         os.environ["XLA_FLAGS"] = "--xla_gpu_cuda_data_dir=/usr/lib/cuda"
         dist.init_process_group("nccl")
         self.world_size = dist.get_world_size()
@@ -116,8 +115,8 @@ class FinetuneDDP:
             if not os.path.exists(hardfake_csv_file):
                 raise FileNotFoundError(f"Hardfake CSV file not found: {hardfake_csv_file}")
             dataset_args.update({
-                'csv_file': hardfake_csv_file,
-                'root_dir': self.dataset_dir
+                'hardfake_csv_file': hardfake_csv_file,
+                'hardfake_root_dir': self.dataset_dir
             })
         elif self.dataset_mode == 'rvf10k':
             train_csv = os.path.join(self.dataset_dir, 'train.csv')
@@ -127,9 +126,9 @@ class FinetuneDDP:
             if not os.path.exists(valid_csv):
                 raise FileNotFoundError(f"RVF10K valid CSV file not found: {valid_csv}")
             dataset_args.update({
-                'train_csv': train_csv,
-                'valid_csv': valid_csv,
-                'root_dir': self.dataset_dir
+                'realfake10k_train_csv': train_csv,
+                'realfake10k_valid_csv': valid_csv,
+                'realfake10k_root_dir': self.dataset_dir
             })
         elif self.dataset_mode == '140k':
             train_csv = os.path.join(self.dataset_dir, 'train.csv')
@@ -140,10 +139,10 @@ class FinetuneDDP:
             if not os.path.exists(valid_csv):
                 raise FileNotFoundError(f"140k valid CSV file not found: {valid_csv}")
             dataset_args.update({
-                'train_csv': train_csv,
-                'valid_csv': valid_csv,
-                'test_csv': test_csv if os.path.exists(test_csv) else None,
-                'root_dir': self.dataset_dir
+                'realfake140k_train_csv': train_csv,
+                'realfake140k_valid_csv': valid_csv,
+                'realfake140k_test_csv': test_csv if os.path.exists(test_csv) else None,
+                'realfake140k_root_dir': self.dataset_dir
             })
         elif self.dataset_mode == '200k':
             train_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/train_labels.csv"
@@ -154,23 +153,27 @@ class FinetuneDDP:
             if not os.path.exists(valid_csv):
                 raise FileNotFoundError(f"200k valid CSV file not found: {valid_csv}")
             dataset_args.update({
-                'train_csv': train_csv,
-                'valid_csv': valid_csv,
-                'test_csv': test_csv if os.path.exists(test_csv) else None,
-                'root_dir': self.dataset_dir
+                'realfake200k_train_csv': train_csv,
+                'realfake200k_valid_csv': valid_csv,
+                'realfake200k_test_csv': test_csv if os.path.exists(test_csv) else None,
+                'realfake200k_root_dir': self.dataset_dir
             })
         elif self.dataset_mode == '190k':
             root_dir = self.args.realfake190k_root_dir
             if not os.path.exists(root_dir):
                 raise FileNotFoundError(f"190k root directory not found: {root_dir}")
-            dataset_args.update({'root_dir': root_dir})
+            dataset_args.update({'realfake190k_root_dir': root_dir})
         elif self.dataset_mode == '330k':
             root_dir = self.args.realfake330k_root_dir
             if not os.path.exists(root_dir):
                 raise FileNotFoundError(f"330k root directory not found: {root_dir}")
-            dataset_args.update({'root_dir': root_dir})
+            dataset_args.update({'realfake330k_root_dir': root_dir})
         else:
             raise ValueError(f"Unknown dataset_mode: {self.dataset_mode}")
+
+        # Print dataset_args for debugging
+        if self.rank == 0:
+            self.logger.info(f"dataset_args: {dataset_args}")
 
         # Initialize dataset
         dataset = Dataset_selector(**dataset_args)
@@ -194,7 +197,7 @@ class FinetuneDDP:
         if self.rank == 0:
             self.best_prec1_before_finetune = ckpt_student["best_prec1"]
         self.student = self.student.cuda()
-        self.student = DDP(self.student, device_ids=[self.local_rank], find_unused_parameters=True)
+        self.student = DDP(self.student, device_ids=['cuda'], find_unused_parameters=True)
 
     def define_loss(self):
         """Define the loss function."""
@@ -203,11 +206,8 @@ class FinetuneDDP:
     def define_optim(self):
         """Define optimizer and scheduler."""
         weight_params = map(
-            lambda a: a[1],
-            filter(
-                lambda p: p[1].requires_grad and "mask" not in p[0],
-                self.student.module.named_parameters(),
-            ),
+            lambda a:스턴, p) in self.student.module.named_parameters()
+            if p.requires_grad and "mask" not in n
         )
         self.finetune_optim_weight = torch.optim.Adamax(
             weight_params,
@@ -410,12 +410,15 @@ class FinetuneDDP:
 
     def main(self):
         """Main function to orchestrate finetuning process."""
-        self.dist_init()
-        self.result_init()
-        self.setup_seed()
-        self.dataload()
-        self.build_model()
-        self.define_loss()
-        self.define_optim()
-        self.finetune()
-        dist.destroy_process_group()
+        try:
+            self.dist_init()
+            self.result_init()
+            self.setup_seed()
+            self.dataload()
+            self.build_model()
+            self.define_loss()
+            self.define_optim()
+            self.finetune()
+        finally:
+            if self.args.ddp:
+                dist.destroy_process_group()
