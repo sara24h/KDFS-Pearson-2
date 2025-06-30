@@ -255,7 +255,7 @@ class Dataset_selector:
             val_data = create_dataframe('Validation')
             test_data = create_dataframe('Test')
 
-        elif dataset_mode ==: '12.9k':
+        elif dataset_mode == '12.9k':
             if not dataset_12_9k_csv_file or not dataset_12_9k_root_dir:
                 raise ValueError("dataset_12_9k_csv_file and dataset_12_9k_root_dir must be provided")
             full_data = pd.read_csv(dataset_12_9k_csv_file)
