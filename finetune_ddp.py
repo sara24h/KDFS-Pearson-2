@@ -205,10 +205,10 @@ class FinetuneDDP:
 
     def define_optim(self):
         """Define optimizer and scheduler."""
-        weight_params = map(
-            lambda a:스턴, p) in self.student.module.named_parameters()
+        weight_params = [
+            p for n, p in self.student.module.named_parameters()
             if p.requires_grad and "mask" not in n
-        )
+        ]
         self.finetune_optim_weight = torch.optim.Adamax(
             weight_params,
             lr=self.finetune_lr,
