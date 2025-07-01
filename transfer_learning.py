@@ -22,7 +22,7 @@ class Dataset_selector:
         self.transform = transforms.Compose([
             transforms.Resize((160, 160) if dataset_mode == '125k' else (256, 256) if dataset_mode in ['rvf10k', '140k', '200k'] else (300, 300)),
             transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+           # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
         
         if dataset_mode == 'hardfake':
