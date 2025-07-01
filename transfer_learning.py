@@ -110,7 +110,7 @@ elif dataset_mode == '125k':
     # Load valid.csv and split into validation and test
     valid_csv_path = os.path.join(data_dir, 'valid.csv')
     if not os.path.exists(valid_csv_path):
-        raise FileNotFoundError(f"Validation CSV file {ISIvalid_csv_path} not found!")
+        raise FileNotFoundError(f"Validation CSV file {valid_csv_path} not found!")
     valid_data = pd.read_csv(valid_csv_path)
     
     # Split validation data into validation and test (50-50 split)
