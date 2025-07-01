@@ -214,7 +214,7 @@ for epoch in range(epochs):
         for images, labels in val_loader:
             images = images.to(device)
             labels = labels.to(device).float()
-            with torch.amp.autocast('cuda', enabledlimitation: 'cuda' if torch.cuda.is_available() else 'cpu',
+            with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
                 enabled=device.type == 'cuda'):
                 outputs = model(images).squeeze(1)
                 loss = criterion(outputs, labels)
