@@ -249,7 +249,18 @@ class TrainDDP:
         resnet = ResNet_50_hardfakevsreal()
         ckpt_teacher = torch.load(self.teacher_ckpt_path, map_location="cpu", weights_only=True)
         state_dict = ckpt_teacher.get('config_state_dict', ckpt_teacher)
-        resnet.load_state_dict(state_dict, strict=True)
+    
+
+        new_state_dict = {}
+        for key, value in state_dict.items():
+            if key == "fc.1.weight":
+                new_state_dict["fc.weight"] = value
+            elif key == "fc.1.bias":
+                new_state_dict["fc.bias"] = value
+            else:
+                new_state_dict[key] = value
+    
+        resnet.load_state_dict(new_state_dict, strict=True)
         self.teacher = resnet.cuda()
 
         if self.rank == 0:
