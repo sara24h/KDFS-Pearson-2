@@ -18,9 +18,11 @@ from ptflops import get_model_complexity_info
 class Dataset_selector:
     def __init__(self, dataset_mode, train_batch_size, eval_batch_size, num_workers, pin_memory, ddp, **kwargs):
         self.dataset_mode = dataset_mode
+        # تبدیل‌های ساده برای آموزش و اعتبارسنجی (بدون Data Augmentation پیشرفته)
         self.transform = transforms.Compose([
             transforms.Resize((160, 160) if dataset_mode == '125k' else (256, 256) if dataset_mode in ['rvf10k', '140k', '200k'] else (300, 300)),
-            transforms.ToTensor()
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
         
         if dataset_mode == 'hardfake':
@@ -68,6 +70,10 @@ class Dataset_selector:
             val_subset_len = val_len // 2
             test_subset_len = val_len - val_subset_len
             val_subset, test_subset = random_split(val_dataset, [val_subset_len, test_subset_len])
+            
+            # اضافه کردن transform به Subset برای جلوگیری از خطا
+            val_subset.transform = val_dataset.transform
+            test_subset.transform = val_dataset.transform
             
             self.loader_train = DataLoader(
                 train_dataset, batch_size=train_batch_size, shuffle=True, num_workers=num_workers, pin_memory=pin_memory
@@ -128,18 +134,20 @@ def parse_args():
                         help='Width of input images (default: 160 for 125k, 300 for hardfake, 256 for rvf10k, 140k, 200k)')
     parser.add_argument('--batch_size', type=int, default=32,
                         help='Batch size for training')
-    parser.add_argument('--epochs', type=int, default=15,
+    parser.add_argument('--epochs', type=int, default=50,
                         help='Number of training epochs')
-    parser.add_argument('--lr_fc', type=float, default=0.0001,
+    parser.add_argument('--lr_fc', type=float, default=1e-3,
                         help='Learning rate for the fully connected (fc) layer')
-    parser.add_argument('--lr_layer4', type=float, default=1e-5,
+    parser.add_argument('--lr_layer4', type=float, default=1e-4,
                         help='Learning rate for the layer4 of ResNet50')
+    parser.add_argument('--lr_other', type=float, default=1e-5,
+                        help='Learning rate for other layers of ResNet50')
     return parser.parse_args()
 
 args = parse_args()
 
 # اعتبارسنجی نرخ‌های یادگیری
-if args.lr_fc <= 0 or args.lr_layer4 <= 0:
+if args.lr_fc <= 0 or args.lr_layer4 <= 0 or args.lr_other <= 0:
     raise ValueError("Learning rates must be positive!")
 
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
@@ -155,6 +163,7 @@ batch_size = args.batch_size
 epochs = args.epochs
 lr_fc = args.lr_fc
 lr_layer4 = args.lr_layer4
+lr_other = args.lr_other
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 if not os.path.exists(data_dir):
@@ -228,13 +237,17 @@ train_loader = dataset.loader_train
 val_loader = dataset.loader_val
 test_loader = dataset.loader_test
 
+# استفاده از ResNet50
 model = models.resnet50(weights='IMAGENET1K_V1')
 num_ftrs = model.fc.in_features
 model.fc = nn.Linear(num_ftrs, 1)
 model = model.to(device)
 
+# باز کردن لایه‌های بیشتر برای fine-tuning
 for param in model.parameters():
     param.requires_grad = False
+for param in model.layer3.parameters():
+    param.requires_grad = True
 for param in model.layer4.parameters():
     param.requires_grad = True
 for param in model.fc.parameters():
@@ -242,9 +255,13 @@ for param in model.fc.parameters():
 
 criterion = nn.BCEWithLogitsLoss()
 optimizer = optim.Adam([
+    {'params': model.layer3.parameters(), 'lr': lr_other},
     {'params': model.layer4.parameters(), 'lr': lr_layer4},
     {'params': model.fc.parameters(), 'lr': lr_fc}
-], weight_decay=1e-4)
+], weight_decay=1e-3)  # افزایش weight decay
+
+# افزودن Learning Rate Scheduler
+scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=3, verbose=True)
 
 scaler = torch.amp.GradScaler('cuda') if device.type == 'cuda' else None
 
@@ -305,6 +322,9 @@ for epoch in range(epochs):
     val_accuracy = 100 * correct_val / total_val
     print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%')
 
+    # به‌روزرسانی scheduler بر اساس دقت اعتبارسنجی
+    scheduler.step(val_accuracy)
+
     if val_accuracy > best_val_acc:
         best_val_acc = val_accuracy
         torch.save(model.state_dict(), best_model_path)
@@ -331,7 +351,11 @@ with torch.no_grad():
 print(f'Test Loss: {test_loss / len(test_loader):.4f}, Test Accuracy: {100 * correct / total:.2f}%')
 
 val_data = dataset.loader_test.dataset.data
-transform_test = dataset.loader_test.dataset.transform
+# دسترسی به transform با بررسی نوع داده
+if isinstance(dataset.loader_test.dataset, Subset):
+    transform_test = dataset.loader_test.dataset.dataset.transform
+else:
+    transform_test = dataset.loader_test.dataset.transform
 
 if dataset_mode == '140k':
     img_column = 'path'
