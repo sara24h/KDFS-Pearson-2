@@ -120,15 +120,14 @@ class FinetuneDDP:
                 'hardfake_root_dir': self.dataset_dir
             })
         elif self.dataset_mode == 'rvf10k':
-            # Assume Dataset_selector expects train and valid subdirectories
-            train_dir = os.path.join(self.dataset_dir, 'train')
-            valid_dir = os.path.join(self.dataset_dir, 'valid')
+            train_dir = os.path.join(self.dataset_dir, 'rvf10k', 'train')
+            valid_dir = os.path.join(self.dataset_dir, 'rvf10k', 'valid')
             if not os.path.exists(train_dir):
                 raise FileNotFoundError(f"RVF10K train directory not found: {train_dir}")
             if not os.path.exists(valid_dir):
                 raise FileNotFoundError(f"RVF10K valid directory not found: {valid_dir}")
             dataset_args.update({
-                'root_dir': self.dataset_dir
+                'root_dir': os.path.join(self.dataset_dir, 'rvf10k')
             })
         elif self.dataset_mode == '140k':
             train_csv = os.path.join(self.dataset_dir, 'train.csv')
