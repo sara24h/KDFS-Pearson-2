@@ -308,7 +308,7 @@ class FinetuneDDP:
 
             with tqdm(total=len(self.train_loader), ncols=100) as _tqdm:
                 if self.rank == 0:
-                    _tqdm.set_description(f"Epoch: {(epoch}/{self.finetune_num_epochs}")
+                    _tqdm.set_description(f"Epoch: {epoch}/{self.finetune_num_epochs}")
                 for images, targets in self.train_loader:
                     self.finetune_optim_weight.zero_grad()
                     images = images.cuda()
