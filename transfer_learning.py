@@ -3,8 +3,9 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
-from torchvision import transforms, models
+from torch.utils.data import DataLoader, Subset
+from torchvision import models
+from torchvision.datasets import ImageFolder
 from torch.amp import autocast, GradScaler
 from PIL import Image
 import argparse
@@ -13,8 +14,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 from IPython.display import Image as IPImage, display
 from ptflops import get_model_complexity_info
-from data.dataset import FaceDataset, Dataset_selector
 from sklearn.model_selection import train_test_split
+
+# فرض می‌کنیم FaceDataset و Dataset_selector از کد اصلی شما وجود دارند
+from data.dataset import FaceDataset, Dataset_selector
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a ResNet50 model with single output for fake vs real face classification.')
@@ -39,7 +42,7 @@ def parse_args():
 args = parse_args()
 
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-torch.backends.cudnn.benchmark = True  
+torch.backends.cudnn.benchmark = True
 torch.backends.cudnn.enabled = True
 
 dataset_mode = args.dataset_mode
@@ -57,6 +60,7 @@ if not os.path.exists(data_dir):
 if not os.path.exists(teacher_dir):
     os.makedirs(teacher_dir)
 
+# تعریف لودرهای داده
 if dataset_mode == 'hardfake':
     dataset = Dataset_selector(
         dataset_mode='hardfake',
@@ -107,46 +111,47 @@ elif dataset_mode == '200k':
         ddp=False
     )
 elif dataset_mode == '125k':
-    # Load valid.csv and split into validation and test
-    valid_csv_path = os.path.join(data_dir, 'valid.csv')
-    if not os.path.exists(valid_csv_path):
-        raise FileNotFoundError(f"Validation CSV file {valid_csv_path} not found!")
-    valid_data = pd.read_csv(valid_csv_path)
-    
-    # Split validation data into validation and test (50-50 split)
-    valid_data, test_data = train_test_split(valid_data, test_size=0.5, random_state=42, stratify=valid_data['label'])
-    
-    # Save temporary CSV files for validation and test
-    temp_valid_csv = os.path.join(teacher_dir, 'temp_valid_125k.csv')
-    temp_test_csv = os.path.join(teacher_dir, 'temp_test_125k.csv')
-    valid_data.to_csv(temp_valid_csv, index=False)
-    test_data.to_csv(temp_test_csv, index=False)
-    
-    dataset = Dataset_selector(
-        dataset_mode='125k',
-        realfake125k_train_csv=os.path.join(data_dir, 'train.csv'),
-        realfake125k_valid_csv=temp_valid_csv,
-        realfake125k_test_csv=temp_test_csv,
-        realfake125k_root_dir=data_dir,
-        train_batch_size=batch_size,
-        eval_batch_size=batch_size,
-        test_batch_size=batch_size,
-        num_workers=4,
-        pin_memory=True,
-        ddp=False
-    )
+    # تعریف مسیرهای پوشه‌های train و validation
+    train_dir = os.path.join(data_dir, 'train')
+    valid_dir = os.path.join(data_dir, 'validation')
+
+    # بررسی وجود پوشه‌ها
+    if not os.path.exists(train_dir):
+        raise FileNotFoundError(f"Train directory {train_dir} not found!")
+    if not os.path.exists(valid_dir):
+        raise FileNotFoundError(f"Validation directory {valid_dir} not found!")
+
+    # بارگذاری داده‌های train و validation با ImageFolder بدون ترانسفورم
+    train_dataset = ImageFolder(root=train_dir)
+    valid_dataset = ImageFolder(root=valid_dir)
+
+    # برای داده‌های تست، از validation استفاده می‌کنیم
+    test_dataset = valid_dataset
+
+    # بررسی کلاس‌ها
+    class_to_idx = train_dataset.class_to_idx  # مثلاً {'real': 1, 'fake': 0}
+    print(f"Class to index mapping: {class_to_idx}")
+
+    # ایجاد DataLoaderها
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
+    val_loader = DataLoader(valid_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
 else:
     raise ValueError("Invalid dataset_mode. Choose 'hardfake', 'rvf10k', '140k', '200k', or '125k'.")
 
-train_loader = dataset.loader_train
-val_loader = dataset.loader_val
-test_loader = dataset.loader_test
+# اگر از حالت‌های غیر 125k استفاده می‌کنید، لودرها را از dataset_selector بگیرید
+if dataset_mode != '125k':
+    train_loader = dataset.loader_train
+    val_loader = dataset.loader_val
+    test_loader = dataset.loader_test
 
+# تعریف مدل
 model = models.resnet50(weights='IMAGENET1K_V1')
 num_ftrs = model.fc.in_features
 model.fc = nn.Linear(num_ftrs, 1)
 model = model.to(device)
 
+# فریز کردن لایه‌ها به جز layer4 و fc
 for param in model.parameters():
     param.requires_grad = False
 for param in model.layer4.parameters():
@@ -168,6 +173,7 @@ if device.type == 'cuda':
 best_val_acc = 0.0
 best_model_path = os.path.join(teacher_dir, 'teacher_model_best.pth')
 
+# حلقه آموزش
 for epoch in range(epochs):
     model.train()
     running_loss = 0.0
@@ -199,6 +205,7 @@ for epoch in range(epochs):
     train_accuracy = 100 * correct_train / total_train
     print(f'Epoch {epoch+1}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%')
 
+    # ارزیابی
     model.eval()
     val_loss = 0.0
     correct_val = 0
@@ -207,7 +214,8 @@ for epoch in range(epochs):
         for images, labels in val_loader:
             images = images.to(device)
             labels = labels.to(device).float()
-            with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
+            with torch.amp.autocast('cuda', enabledlimitation: 'cuda' if torch.cuda.is_available() else 'cpu',
+                enabled=device.type == 'cuda'):
                 outputs = model(images).squeeze(1)
                 loss = criterion(outputs, labels)
             val_loss += loss.item()
@@ -224,9 +232,11 @@ for epoch in range(epochs):
         torch.save(model.state_dict(), best_model_path)
         print(f'Saved best model with validation accuracy: {val_accuracy:.2f}% at epoch {epoch+1}')
 
+# ذخیره مدل نهایی
 torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model_final.pth'))
 print(f'Saved final model at epoch {epochs}')
 
+# تست مدل
 model.eval()
 test_loss = 0.0
 correct = 0
@@ -244,59 +254,88 @@ with torch.no_grad():
         total += labels.size(0)
 print(f'Test Loss: {test_loss / len(test_loader):.4f}, Test Accuracy: {100 * correct / total:.2f}%')
 
-val_data = dataset.loader_test.dataset.data
-transform_test = dataset.loader_test.dataset.transform
+# نمایش نمونه‌های تست
+if dataset_mode == '125k':
+    test_data = test_dataset.dataset
+    random_indices = random.sample(range(len(test_dataset)), min(10, len(test_dataset)))
+    fig, axes = plt.subplots(2, 5, figsize=(15, 8))
+    axes = axes.ravel()
 
-if dataset_mode == '140k' or dataset_mode == '125k':
-    img_column = 'path'
-elif dataset_mode == '200k':
-    img_column = 'filename'
-else:
-    img_column = 'images_id'
+    with torch.no_grad():
+        for i, idx in enumerate(random_indices):
+            image, label = test_dataset[idx]
+            image_path = test_data.samples[idx][0]  # مسیر تصویر
+            true_label = 'real' if label == 1 else 'fake'
 
-if img_column not in val_data.columns:
-    raise KeyError(f"Column '{img_column}' not found in DataFrame. Available columns: {list(val_data.columns)}")
+            # تصویر به‌صورت خام بارگذاری می‌شود
+            image = Image.open(image_path).convert('RGB')
+            # تبدیل تصویر به تنسور برای مدل
+            image_transformed = torch.tensor(np.array(image).transpose(2, 0, 1) / 255.0).float().unsqueeze(0).to(device)
+            
+            with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
+                output = model(image_transformed).squeeze(1)
+            prob = torch.sigmoid(output).item()
+            predicted_label = 'real' if prob > 0.5 else 'fake'
 
-random_indices = random.sample(range(len(val_data)), min(10, len(val_data)))
-fig, axes = plt.subplots(2, 5, figsize=(15, 8))
-axes = axes.ravel()
-
-with torch.no_grad():
-    for i, idx in enumerate(random_indices):
-        row = val_data.iloc[idx]
-        img_name = row[img_column]
-        label = row['label']
-       
-        if dataset_mode in ['140k', '125k']:
-            img_path = os.path.join(data_dir, img_name)
-        elif dataset_mode == '200k':
-            subfolder = 'real' if label == 1 else 'ai_images'
-            img_path = os.path.join(data_dir, 'my_real_vs_ai_dataset', 'my_real_vs_ai_dataset', subfolder, img_name)
-        else:
-            img_path = os.path.join(data_dir, img_name)
-
-        if not os.path.exists(img_path):
-            print(f"Warning: Image not found: {img_path}")
-            axes[i].set_title("Image not found")
+            axes[i].imshow(image)
+            axes[i].set_title(f'True: {true_label}\nPred: {predicted_label}', fontsize=10)
             axes[i].axis('off')
-            continue
-        image = Image.open(img_path).convert('RGB')
-        image_transformed = transform_test(image).unsqueeze(0).to(device)
-        with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
-            output = model(image_transformed).squeeze(1)
-        prob = torch.sigmoid(output).item()
-        predicted_label = 'real' if prob > 0.5 else 'fake'
-        mqtt = 'real' if label == 1 else 'fake'
-        axes[i].imshow(image)
-        axes[i].set_title(f'True: {true_label}\nPred: {predicted_label}', fontsize=10)
-        axes[i].axis('off')
-        print(f"Image: {img_path}, True Label: {true_label}, Predicted: {predicted_label}")
+            print(f"Image: {image_path}, True Label: {true_label}, Predicted: {predicted_label}")
+else:
+    # برای حالت‌های غیر 125k که از CSV استفاده می‌کنند
+    val_data = dataset.loader_test.dataset.data
+    if dataset_mode == '140k' or dataset_mode == '125k':
+        img_column = 'path'
+    elif dataset_mode == '200k':
+        img_column = 'filename'
+    else:
+        img_column = 'images_id'
+
+    if img_column not in val_data.columns:
+        raise KeyError(f"Column '{img_column}' not found in DataFrame. Available columns: {list(val_data.columns)}")
+
+    random_indices = random.sample(range(len(val_data)), min(10, len(val_data)))
+    fig, axes = plt.subplots(2, 5, figsize=(15, 8))
+    axes = axes.ravel()
+
+    with torch.no_grad():
+        for i, idx in enumerate(random_indices):
+            row = val_data.iloc[idx]
+            img_name = row[img_column]
+            label = row['label']
+            
+            if dataset_mode in ['140k', '125k']:
+                img_path = os.path.join(data_dir, img_name)
+            elif dataset_mode == '200k':
+                subfolder = 'real' if label == 1 else 'ai_images'
+                img_path = os.path.join(data_dir, 'my_real_vs_ai_dataset', 'my_real_vs_ai_dataset', subfolder, img_name)
+            else:
+                img_path = os.path.join(data_dir, img_name)
+
+            if not os.path.exists(img_path):
+                print(f"Warning: Image not found: {img_path}")
+                axes[i].set_title("Image not found")
+                axes[i].axis('off')
+                continue
+            image = Image.open(img_path).convert('RGB')
+            # تبدیل تصویر به تنسور
+            image_transformed = torch.tensor(np.array(image).transpose(2, 0, 1) / 255.0).float().unsqueeze(0).to(device)
+            with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
+                output = model(image_transformed).squeeze(1)
+            prob = torch.sigmoid(output).item()
+            predicted_label = 'real' if prob > 0.5 else 'fake'
+            true_label = 'real' if label == 1 else 'fake'
+            axes[i].imshow(image)
+            axes[i].set_title(f'True: {true_label}\nPred: {predicted_label}', fontsize=10)
+            axes[i].axis('off')
+            print(f"Image: {img_path}, True Label: {true_label}, Predicted: {predicted_label}")
 
 plt.tight_layout()
 file_path = os.path.join(teacher_dir, 'test_samples.png')
 plt.savefig(file_path)
 display(IPImage(filename=file_path))
 
+# محاسبه پیچیدگی مدل
 for param in model.parameters():
     param.requires_grad = True
 
