@@ -11,7 +11,7 @@ from tqdm import tqdm
 import time
 from utils import utils, loss, meter, scheduler
 from data.dataset import Dataset_selector
-from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k
+from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
 
 class Finetune:
     def __init__(self, args):
@@ -131,10 +131,9 @@ class Finetune:
         self.logger.info("Loading student model")
         if not os.path.exists(self.finetune_student_ckpt_path):
             raise FileNotFoundError(f"Checkpoint file not found: {self.finetune_student_ckpt_path}")
-        if self.dataset_mode == "hardfake":
-            self.student = ResNet_50_sparse_hardfakevsreal()
-        else:  # rvf10k or 140k
-            self.student = ResNet_50_sparse_rvf10k()
+       
+        self.student = ResNet_50_sparse_hardfakevsreal()
+      
         ckpt_student = torch.load(self.finetune_student_ckpt_path, map_location="cpu", weights_only=True)
         self.student.load_state_dict(ckpt_student["student"])
         self.best_prec1_before_finetune = ckpt_student["best_prec1"]
