@@ -10,7 +10,6 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from utils import utils, loss, meter, scheduler
-from data.dataset import Dataset_selector, FaceDataset
 from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
 import pandas as pd
 from PIL import Image
