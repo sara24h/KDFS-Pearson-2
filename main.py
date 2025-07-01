@@ -44,14 +44,14 @@ def parse_args():
         "--dataset_mode",
         type=str,
         default="hardfake",
-        choices=("hardfake", "rvf10k", "140k", "200k", "190k", "330k"),  # Added 330k
-        help="Dataset to use: hardfake, rvf10k, 140k, 200k, 190k, or 330k",
+        choices=("hardfake", "rvf10k", "140k", "200k", "190k", "330k", "125k"),  # Added 125k
+        help="Dataset to use: hardfake, rvf10k, 140k, 200k, 190k, 330k, or 125k",
     )
     parser.add_argument(
         "--dataset_dir",
         type=str,
         default="/kaggle/input/hardfakevsrealfaces",
-        help="The dataset path (used for hardfake, rvf10k, 140k, 200k)",
+        help="The dataset path (used for hardfake, rvf10k, 140k, 200k, 190k, 330k, 125k)",
     )
     parser.add_argument(
         "--hardfake_csv_file",
@@ -114,10 +114,16 @@ def parse_args():
         help="The path to the 190k dataset directory (for 190k mode)",
     )
     parser.add_argument(
-        "--realfake330k_root_dir",  # New argument for 330k
+        "--realfake330k_root_dir",
         type=str,
         default="/kaggle/input/deepfake-dataset",
         help="The path to the 330k dataset directory (for 330k mode)",
+    )
+    parser.add_argument(
+        "--realfake125k_root_dir",
+        type=str,
+        default="/kaggle/input/dfdc-faces-of-the-train-sample",
+        help="The path to the 125k dataset directory (for 125k mode)",
     )
     parser.add_argument(
         "--num_workers",
@@ -402,6 +408,9 @@ def validate_args(args):
     elif args.dataset_mode == "330k":
         if not os.path.exists(args.realfake330k_root_dir):
             raise FileNotFoundError(f"330k dataset directory not found: {args.realfake330k_root_dir}")
+    elif args.dataset_mode == "125k":
+        if not os.path.exists(args.realfake125k_root_dir):
+            raise FileNotFoundError(f"125k dataset directory not found: {args.realfake125k_root_dir}")
 
     if args.phase in ["train", "finetune"] and not os.path.exists(args.teacher_ckpt_path):
         raise FileNotFoundError(f"Teacher checkpoint not found: {args.teacher_ckpt_path}")
