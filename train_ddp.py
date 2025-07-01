@@ -282,18 +282,13 @@ class TrainDDP:
 
         if self.rank == 0:
             self.logger.info("Building student model")
-        if self.dataset_mode == "hardfake":
-            self.student = ResNet_50_sparse_hardfakevsreal(
-                gumbel_start_temperature=self.gumbel_start_temperature,
-                gumbel_end_temperature=self.gumbel_end_temperature,
-                num_epochs=self.num_epochs,
-            )
-        else:  # rvf10k, 140k, 200k, 190k, 330k, or 125k
-            self.student = ResNet_50_sparse_rvf10k(
-                gumbel_start_temperature=self.gumbel_start_temperature,
-                gumbel_end_temperature=self.gumbel_end_temperature,
-                num_epochs=self.num_epochs,
-            )
+        
+        self.student = ResNet_50_sparse_hardfakevsreal(
+            gumbel_start_temperature=self.gumbel_start_temperature,
+            gumbel_end_temperature=self.gumbel_end_temperature,
+            num_epochs=self.num_epochs,
+        )
+      
         self.student.dataset_type = self.args.dataset_type
         num_ftrs = self.student.fc.in_features
         self.student.fc = nn.Linear(num_ftrs, 1)
