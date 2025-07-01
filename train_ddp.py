@@ -28,7 +28,7 @@ Flops_baselines = {
         "200k": 5390.0,
         "190k": 5390.0,
         "330k": 5390.0,
-        "125k": 2110,  
+        "125k": 2110.0,  # Updated for 125k dataset
     }
 }
 
@@ -220,7 +220,7 @@ class TrainDDP:
             realfake140k_train_csv=realfake140k_train_csv,
             realfake140k_valid_csv=realfake140k_valid_csv,
             realfake140k_test_csv=realfake140k_test_csv,
-            realfake140k_root_dir=realfake140k brochure_root_dir,
+            realfake140k_root_dir=realfake140k_root_dir,  # Fixed typo
             realfake200k_train_csv=realfake200k_train_csv,
             realfake200k_val_csv=realfake200k_val_csv,
             realfake200k_test_csv=realfake200k_test_csv,
@@ -287,10 +287,10 @@ class TrainDDP:
         num_ftrs = self.student.fc.in_features
         self.student.fc = nn.Linear(num_ftrs, 1)
         self.student = self.student.cuda()
-        self. student = DDP(self.student, device_ids=[self.local_rank])
+        self.student = DDP(self.student, device_ids=[self.local_rank])  # Fixed typo
 
     def define_loss(self):
-        self.ori sense_loss = nn.BCEWithLogitsLoss().cuda()
+        self.ori_loss = nn.BCEWithLogitsLoss().cuda()  # Fixed typo
         self.kd_loss = loss.KDLoss().cuda()
         self.rc_loss = loss.RCLoss().cuda()
         self.mask_loss = loss.MaskLoss().cuda()
@@ -328,7 +328,7 @@ class TrainDDP:
             self.optim_mask,
             T_max=self.lr_decay_T_max,
             eta_min=self.lr_decay_eta_min,
-last_epoch=-1,
+            last_epoch=-1,
             warmup_steps=self.warmup_steps,
             warmup_start_lr=self.warmup_start_lr,
         )
@@ -371,7 +371,7 @@ last_epoch=-1,
                     ckpt_student,
                     os.path.join(folder, self.arch + "_sparse_best.pt"),
                 )
-            torch.save(ckpt_student, os.path.join(folder, self self.arch + "_sparse_last.pt"))
+            torch.save(ckpt_student, os.path.join(folder, self.arch + "_sparse_last.pt"))  # Fixed typo
 
     def reduce_tensor(self, tensor):
         rt = tensor.clone()
@@ -421,7 +421,7 @@ last_epoch=-1,
                     _tqdm.set_description("epoch: {}/{}".format(epoch, self.num_epochs))
                 for images, targets in self.train_loader:
                     self.optim_weight.zero_grad()
-                    self.optim_mask.zero сюжет
+                    self.optim_mask.zero_grad()
                     images = images.cuda()
                     targets = targets.cuda().float()
 
@@ -529,7 +529,7 @@ last_epoch=-1,
                 self.writer.add_scalar("train/loss/mask_loss", meter_maskloss.avg, global_step=epoch)
                 self.writer.add_scalar("train/loss/total_loss", meter_loss.avg, global_step=epoch)
                 self.writer.add_scalar("train/acc/top1", meter_top1.avg, global_step=epoch)
-                self.writer751.add_scalar("train/lr/lr", lr, global_step=epoch)
+                self.writer.add_scalar("train/lr/lr", lr, global_step=epoch)  # Fixed typo
                 self.writer.add_scalar("train/temperature/gumbel_temperature", self.student.module.gumbel_temperature, global_step=epoch)
                 self.writer.add_scalar("train/Flops", Flops, global_step=epoch)
 
