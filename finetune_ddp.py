@@ -126,9 +126,9 @@ class FinetuneDDP:
             if not os.path.exists(valid_csv):
                 raise FileNotFoundError(f"RVF10K valid CSV file not found: {valid_csv}")
             dataset_args.update({
-                'realfake10k_train_csv': train_csv,
-                'realfake10k_valid_csv': valid_csv,
-                'realfake10k_root_dir': self.dataset_dir
+                'train_csv': train_csv,
+                'valid_csv': valid_csv,
+                'root_dir': self.dataset_dir
             })
         elif self.dataset_mode == '140k':
             train_csv = os.path.join(self.dataset_dir, 'train.csv')
@@ -139,10 +139,10 @@ class FinetuneDDP:
             if not os.path.exists(valid_csv):
                 raise FileNotFoundError(f"140k valid CSV file not found: {valid_csv}")
             dataset_args.update({
-                'realfake140k_train_csv': train_csv,
-                'realfake140k_valid_csv': valid_csv,
-                'realfake140k_test_csv': test_csv if os.path.exists(test_csv) else None,
-                'realfake140k_root_dir': self.dataset_dir
+                'train_csv': train_csv,
+                'valid_csv': valid_csv,
+                'test_csv': test_csv if os.path.exists(test_csv) else None,
+                'root_dir': self.dataset_dir
             })
         elif self.dataset_mode == '200k':
             train_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/train_labels.csv"
@@ -153,21 +153,21 @@ class FinetuneDDP:
             if not os.path.exists(valid_csv):
                 raise FileNotFoundError(f"200k valid CSV file not found: {valid_csv}")
             dataset_args.update({
-                'realfake200k_train_csv': train_csv,
-                'realfake200k_valid_csv': valid_csv,
-                'realfake200k_test_csv': test_csv if os.path.exists(test_csv) else None,
-                'realfake200k_root_dir': self.dataset_dir
+                'train_csv': train_csv,
+                'valid_csv': valid_csv,
+                'test_csv': test_csv if os.path.exists(test_csv) else None,
+                'root_dir': self.dataset_dir
             })
         elif self.dataset_mode == '190k':
             root_dir = self.args.realfake190k_root_dir
             if not os.path.exists(root_dir):
                 raise FileNotFoundError(f"190k root directory not found: {root_dir}")
-            dataset_args.update({'realfake190k_root_dir': root_dir})
+            dataset_args.update({'root_dir': root_dir})
         elif self.dataset_mode == '330k':
             root_dir = self.args.realfake330k_root_dir
             if not os.path.exists(root_dir):
                 raise FileNotFoundError(f"330k root directory not found: {root_dir}")
-            dataset_args.update({'realfake330k_root_dir': root_dir})
+            dataset_args.update({'root_dir': root_dir})
         else:
             raise ValueError(f"Unknown dataset_mode: {self.dataset_mode}")
 
