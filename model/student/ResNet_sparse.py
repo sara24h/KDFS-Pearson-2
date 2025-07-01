@@ -270,11 +270,11 @@ class ResNet_sparse(MaskedNet):
         self.layer3 = self._make_layer(block, 256, num_blocks[2], stride=2, layer_prefix="layer3")
         self.layer4 = self._make_layer(block, 512, num_blocks[3], stride=2, layer_prefix="layer4")
         
-        if dataset_type == "125k":
-            self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        else:
-            self.avgpool = nn.Sequential(nn.AvgPool2d(7))
-        
+        #if dataset_type == "125k":
+         #   self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        #else:
+         #   self.avgpool = nn.Sequential(nn.AvgPool2d(7))
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(512 * block.expansion, num_classes)
 
         if block == BasicBlock_sparse:
