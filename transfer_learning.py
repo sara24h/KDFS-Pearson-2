@@ -18,11 +18,9 @@ from ptflops import get_model_complexity_info
 class Dataset_selector:
     def __init__(self, dataset_mode, train_batch_size, eval_batch_size, num_workers, pin_memory, ddp, **kwargs):
         self.dataset_mode = dataset_mode
-        # تبدیل‌های ساده برای آموزش و اعتبارسنجی (بدون Data Augmentation پیشرفته)
         self.transform = transforms.Compose([
             transforms.Resize((160, 160) if dataset_mode == '125k' else (256, 256) if dataset_mode in ['rvf10k', '140k', '200k'] else (300, 300)),
             transforms.ToTensor(),
-           # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
         
         if dataset_mode == 'hardfake':
@@ -65,13 +63,11 @@ class Dataset_selector:
             train_dataset = datasets.ImageFolder(os.path.join(kwargs.get('realfake125k_root_dir'), 'train'), transform=self.transform)
             val_dataset = datasets.ImageFolder(os.path.join(kwargs.get('realfake125k_root_dir'), 'validation'), transform=self.transform)
             
-            # تقسیم دیتاست validation به دو بخش: نصف برای validation و نصف برای تست
             val_len = len(val_dataset)
             val_subset_len = val_len // 2
             test_subset_len = val_len - val_subset_len
             val_subset, test_subset = random_split(val_dataset, [val_subset_len, test_subset_len])
             
-            # اضافه کردن transform به Subset برای جلوگیری از خطا
             val_subset.transform = val_dataset.transform
             test_subset.transform = val_dataset.transform
             
@@ -84,23 +80,20 @@ class Dataset_selector:
             self.loader_test = DataLoader(
                 test_subset, batch_size=eval_batch_size, shuffle=False, num_workers=num_workers, pin_memory=pin_memory
             )
-            # تنظیم DataFrame برای تست
             self.loader_test.dataset.data = pd.DataFrame({
                 'filename': [os.path.join(*val_dataset.imgs[i][0].split(os.sep)[-3:]) for i in test_subset.indices],
                 'label': [val_dataset.imgs[i][1] for i in test_subset.indices]
             })
-            # تنظیم DataFrame برای validation
             self.loader_val.dataset.data = pd.DataFrame({
                 'filename': [os.path.join(*val_dataset.imgs[i][0].split(os.sep)[-3:]) for i in val_subset.indices],
                 'label': [val_dataset.imgs[i][1] for i in val_subset.indices]
             })
 
-        # چاپ تعداد داده‌ها برای بررسی
         print(f"Number of train samples for {dataset_mode}: {len(self.loader_train.dataset)}")
         print(f"Number of validation samples for {dataset_mode}: {len(self.loader_val.dataset)}")
         print(f"Number of test samples for {dataset_mode}: {len(self.loader_test.dataset)}")
 
-# تعریف FaceDataset برای دیتاست‌های CSV
+# تعریف FaceDataset
 class FaceDataset:
     def __init__(self, data, root_dir, transform=None, split='train'):
         self.data = data
@@ -122,31 +115,20 @@ class FaceDataset:
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a ResNet50 model with single output for fake vs real face classification.')
-    parser.add_argument('--dataset_mode', type=str, required=True, choices=['hardfake', 'rvf10k', '140k', '200k', '125k'],
-                        help='Dataset to use: hardfake, rvf10k, 140k, 200k, or 125k')
-    parser.add_argument('--data_dir', type=str, required=True,
-                        help='Path to the dataset directory containing images and CSV file(s)')
-    parser.add_argument('--teacher_dir', type=str, default='teacher_dir',
-                        help='Directory to save the trained model and outputs')
-    parser.add_argument('--img_height', type=int, default=160,
-                        help='Height of input images (default: 160 for 125k, 300 for hardfake, 256 for rvf10k, 140k, 200k)')
-    parser.add_argument('--img_width', type=int, default=160,
-                        help='Width of input images (default: 160 for 125k, 300 for hardfake, 256 for rvf10k, 140k, 200k)')
-    parser.add_argument('--batch_size', type=int, default=32,
-                        help='Batch size for training')
-    parser.add_argument('--epochs', type=int, default=50,
-                        help='Number of training epochs')
-    parser.add_argument('--lr_fc', type=float, default=1e-3,
-                        help='Learning rate for the fully connected (fc) layer')
-    parser.add_argument('--lr_layer4', type=float, default=1e-4,
-                        help='Learning rate for the layer4 of ResNet50')
-    parser.add_argument('--lr_other', type=float, default=1e-5,
-                        help='Learning rate for other layers of ResNet50')
+    parser.add_argument('--dataset_mode', type=str, required=True, choices=['hardfake', 'rvf10k', '140k', '200k', '125k'])
+    parser.add_argument('--data_dir', type=str, required=True)
+    parser.add_argument('--teacher_dir', type=str, default='teacher_dir')
+    parser.add_argument('--img_height', type=int, default=160)
+    parser.add_argument('--img_width', type=int, default=160)
+    parser.add_argument('--batch_size', type=int, default=32)
+    parser.add_argument('--epochs', type=int, default=50)
+    parser.add_argument('--lr_fc', type=float, default=1e-3)
+    parser.add_argument('--lr_layer4', type=float, default=1e-4)
+    parser.add_argument('--lr_other', type=float, default=1e-5)
     return parser.parse_args()
 
 args = parse_args()
 
-# اعتبارسنجی نرخ‌های یادگیری
 if args.lr_fc <= 0 or args.lr_layer4 <= 0 or args.lr_other <= 0:
     raise ValueError("Learning rates must be positive!")
 
@@ -171,56 +153,7 @@ if not os.path.exists(data_dir):
 if not os.path.exists(teacher_dir):
     os.makedirs(teacher_dir)
 
-if dataset_mode == 'hardfake':
-    dataset = Dataset_selector(
-        dataset_mode='hardfake',
-        hardfake_csv_file=os.path.join(data_dir, 'data.csv'),
-        hardfake_root_dir=data_dir,
-        train_batch_size=batch_size,
-        eval_batch_size=batch_size,
-        num_workers=4,
-        pin_memory=True,
-        ddp=False
-    )
-elif dataset_mode == 'rvf10k':
-    dataset = Dataset_selector(
-        dataset_mode='rvf10k',
-        realfake10k_train_csv=os.path.join(data_dir, 'train.csv'),
-        realfake10k_valid_csv=os.path.join(data_dir, 'valid.csv'),
-        realfake10k_root_dir=data_dir,
-        train_batch_size=batch_size,
-        eval_batch_size=batch_size,
-        num_workers=4,
-        pin_memory=True,
-        ddp=False
-    )
-elif dataset_mode == '140k':
-    dataset = Dataset_selector(
-        dataset_mode='140k',
-        realfake140k_train_csv=os.path.join(data_dir, 'train.csv'),
-        realfake140k_valid_csv=os.path.join(data_dir, 'valid.csv'),
-        realfake140k_test_csv=os.path.join(data_dir, 'test.csv'),
-        realfake140k_root_dir=data_dir,
-        train_batch_size=batch_size,
-        eval_batch_size=batch_size,
-        num_workers=4,
-        pin_memory=True,
-        ddp=False
-    )
-elif dataset_mode == '200k':
-    dataset = Dataset_selector(
-        dataset_mode='200k',
-        realfake200k_train_csv="/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/train_labels.csv",
-        realfake200k_val_csv="/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/val_labels.csv",
-        realfake200k_test_csv="/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/test_labels.csv",
-        realfake200k_root_dir=data_dir,
-        train_batch_size=batch_size,
-        eval_batch_size=batch_size,
-        num_workers=4,
-        pin_memory=True,
-        ddp=False
-    )
-elif dataset_mode == '125k':
+if dataset_mode == '125k':
     dataset = Dataset_selector(
         dataset_mode='125k',
         realfake125k_root_dir=data_dir,
@@ -230,17 +163,18 @@ elif dataset_mode == '125k':
         pin_memory=True,
         ddp=False
     )
-else:
-    raise ValueError("Invalid dataset_mode. Choose 'hardfake', 'rvf10k', '140k', '200k', or '125k'.")
 
 train_loader = dataset.loader_train
 val_loader = dataset.loader_val
 test_loader = dataset.loader_test
 
-# استفاده از ResNet50
+# استفاده از ResNet50 با Dropout
 model = models.resnet50(weights='IMAGENET1K_V1')
 num_ftrs = model.fc.in_features
-model.fc = nn.Linear(num_ftrs, 1)
+model.fc = nn.Sequential(
+    nn.Dropout(0.5),  
+    nn.Linear(num_ftrs, 1)
+)
 model = model.to(device)
 
 # باز کردن لایه‌های بیشتر برای fine-tuning
@@ -255,12 +189,11 @@ for param in model.fc.parameters():
 
 criterion = nn.BCEWithLogitsLoss()
 optimizer = optim.Adam([
-    {'params': model.layer3.parameters(), 'lr': lr_other},
-    {'params': model.layer4.parameters(), 'lr': lr_layer4},
-    {'params': model.fc.parameters(), 'lr': lr_fc}
-], weight_decay=1e-3)  # افزایش weight decay
+    {'params': model.layer3.parameters(), 'lr': 2e-5},
+    {'params': model.layer4.parameters(), 'lr': 2e-4},
+    {'params': model.fc.parameters(), 'lr': 2e-3}
+], weight_decay=1e-3)
 
-# افزودن Learning Rate Scheduler
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=3, verbose=True)
 
 scaler = torch.amp.GradScaler('cuda') if device.type == 'cuda' else None
@@ -322,7 +255,6 @@ for epoch in range(epochs):
     val_accuracy = 100 * correct_val / total_val
     print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%')
 
-    # به‌روزرسانی scheduler بر اساس دقت اعتبارسنجی
     scheduler.step(val_accuracy)
 
     if val_accuracy > best_val_acc:
@@ -351,7 +283,6 @@ with torch.no_grad():
 print(f'Test Loss: {test_loss / len(test_loader):.4f}, Test Accuracy: {100 * correct / total:.2f}%')
 
 val_data = dataset.loader_test.dataset.data
-# دسترسی به transform با بررسی نوع داده
 if isinstance(dataset.loader_test.dataset, Subset):
     transform_test = dataset.loader_test.dataset.dataset.transform
 else:
