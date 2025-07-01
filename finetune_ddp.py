@@ -11,7 +11,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from utils import utils, loss, meter, scheduler
 from data.dataset import Dataset_selector
-from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k
+from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
 
 class FinetuneDDP:
     def __init__(self, args):
@@ -147,10 +147,9 @@ class FinetuneDDP:
             self.logger.info("Loading student model")
         if not os.path.exists(self.finetune_student_ckpt_path):
             raise FileNotFoundError(f"Checkpoint file not found: {self.finetune_student_ckpt_path}")
-        if self.dataset_mode == "hardfake":
-            self.student = ResNet_50_sparse_hardfakevsreal()
-        else:  # rvf10k or 140k
-            self.student = ResNet_50_sparse_rvf10k()
+        
+        self.student = ResNet_50_sparse_hardfakevsreal()
+        
         ckpt_student = torch.load(self.finetune_student_ckpt_path, map_location="cpu", weights_only=True)
         self.student.load_state_dict(ckpt_student["student"])
         if self.rank == 0:
