@@ -107,7 +107,8 @@ class FinetuneDDP:
             'eval_batch_size': self.finetune_eval_batch_size,
             'num_workers': self.num_workers,
             'pin_memory': self.pin_memory,
-            'ddp': True
+            'ddp': True,
+            'root_dir': self.dataset_dir
         }
 
         if self.dataset_mode == 'hardfake':
@@ -119,15 +120,14 @@ class FinetuneDDP:
                 'hardfake_root_dir': self.dataset_dir
             })
         elif self.dataset_mode == 'rvf10k':
-            train_csv = os.path.join(self.dataset_dir, 'train.csv')
-            valid_csv = os.path.join(self.dataset_dir, 'valid.csv')
-            if not os.path.exists(train_csv):
-                raise FileNotFoundError(f"RVF10K train CSV file not found: {train_csv}")
-            if not os.path.exists(valid_csv):
-                raise FileNotFoundError(f"RVF10K valid CSV file not found: {valid_csv}")
+            # Assume Dataset_selector expects train and valid subdirectories
+            train_dir = os.path.join(self.dataset_dir, 'train')
+            valid_dir = os.path.join(self.dataset_dir, 'valid')
+            if not os.path.exists(train_dir):
+                raise FileNotFoundError(f"RVF10K train directory not found: {train_dir}")
+            if not os.path.exists(valid_dir):
+                raise FileNotFoundError(f"RVF10K valid directory not found: {valid_dir}")
             dataset_args.update({
-                'train_csv': train_csv,
-                'valid_csv': valid_csv,
                 'root_dir': self.dataset_dir
             })
         elif self.dataset_mode == '140k':
