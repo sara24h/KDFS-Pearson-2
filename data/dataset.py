@@ -205,7 +205,7 @@ class FinetuneDDP:
         ckpt_student = torch.load(self.finetune_student_ckpt_path, map_location="cpu", weights_only=True)
         self.student.load_state_dict(ckpt_student["student"])
         if self.rank == 0:
-            self.best Precise1_before_finetune = ckpt_student["best_prec1"]
+            self.best_prec1_before_finetune = ckpt_student["best_prec1"]
         self.student = self.student.cuda()
         self.student = DDP(self.student, device_ids=['cuda'], find_unused_parameters=True)
 
