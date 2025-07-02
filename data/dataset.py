@@ -188,7 +188,7 @@ class Dataset_selector(Dataset):
             def collect_images_from_folder(split):
                 data = []
                 for label in ['Real', 'Fake']:
-                    folder_path = os.path.join(root_dir, split, label )
+                    folder_path = os.path.join(root_dir, split, label)
                     if not os.path.exists(folder_path):
                         raise FileNotFoundError(f"Folder not found: {folder_path}")
                     for img_name in os.listdir(folder_path):
