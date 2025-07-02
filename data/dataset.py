@@ -30,7 +30,7 @@ class FaceDataset(Dataset):
 class Dataset_selector(Dataset):
     def __init__(
         self,
-        dataset_mode,  # 'hardfake', 'rvf10k', '140k', or '190k'
+        dataset_mode,  # 'hardfake', 'rvf10k', '140k', '190k', '200k'
         hardfake_csv_file=None,
         hardfake_root_dir=None,
         rvf10k_train_csv=None,
@@ -40,20 +40,24 @@ class Dataset_selector(Dataset):
         realfake140k_valid_csv=None,
         realfake140k_test_csv=None,
         realfake140k_root_dir=None,
-        realfake190k_root_dir=None, 
+        realfake200k_train_csv=None,
+        realfake200k_val_csv=None,
+        realfake200k_test_csv=None,
+        realfake200k_root_dir=None,
+        realfake190k_root_dir=None,
         train_batch_size=32,
         eval_batch_size=32,
         num_workers=8,
         pin_memory=True,
         ddp=False,
     ):
-        if dataset_mode not in ['hardfake', 'rvf10k', '140k', '190k']:
-            raise ValueError("dataset_mode must be 'hardfake', 'rvf10k', '140k', or '190k'")
+        if dataset_mode not in ['hardfake', 'rvf10k', '140k', '190k', '200k']:
+            raise ValueError("dataset_mode must be 'hardfake', 'rvf10k', '140k', '190k', or '200k'")
 
         self.dataset_mode = dataset_mode
 
         # Define image size based on dataset_mode
-        image_size = (256, 256) if dataset_mode in ['rvf10k', '140k', '190k'] else (300, 300)
+        image_size = (256, 256) if dataset_mode in ['rvf10k', '140k', '190k', '200k'] else (300, 300)
 
         # Define mean and std based on dataset_mode
         if dataset_mode == 'hardfake':
@@ -65,7 +69,10 @@ class Dataset_selector(Dataset):
         elif dataset_mode == '140k':
             mean = (0.5207, 0.4258, 0.3806)
             std = (0.2490, 0.2239, 0.2212)
-        else: 
+        elif dataset_mode == '200k':
+            mean = (0.4868, 0.3972, 0.3624)
+            std = (0.2296, 0.2066, 0.2009)
+        else:  # 190k
             mean = (0.4668, 0.3816, 0.3414)
             std = (0.2410, 0.2161, 0.2081)
 
@@ -88,7 +95,7 @@ class Dataset_selector(Dataset):
         ])
 
         # Set img_column based on dataset_mode
-        img_column = 'path' if dataset_mode in ['140k', '190k'] else 'images_id'
+        img_column = 'path' if dataset_mode in ['140k'] else 'images_id'
 
         # Load data based on dataset_mode
         if dataset_mode == 'hardfake':
@@ -156,6 +163,23 @@ class Dataset_selector(Dataset):
             val_data = val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
             test_data = test_data.sample(frac=1, random_state=3407).reset_index(drop=True)
 
+        elif dataset_mode == '200k':
+            if not realfake200k_train_csv or not realfake200k_val_csv or not realfake200k_test_csv or not realfake200k_root_dir:
+                raise ValueError("realfake200k_train_csv, realfake200k_val_csv, realfake200k_test_csv, and realfake200k_root_dir must be provided")
+            train_data = pd.read_csv(realfake200k_train_csv)
+            val_data = pd.read_csv(realfake200k_val_csv)
+            test_data = pd.read_csv(realfake200k_test_csv)
+            root_dir = realfake200k_root_dir
+
+            def create_image_path(row):
+                folder = 'real' if row['label'] == 1 else 'ai_images'
+                img_name = row.get('filename', row.get('image', row.get('path', '')))
+                return os.path.join(folder, img_name)
+
+            train_data['images_id'] = train_data.apply(create_image_path, axis=1)
+            val_data['images_id'] = val_data.apply(create_image_path, axis=1)
+            test_data['images_id'] = test_data.apply(create_image_path, axis=1)
+
         else:  # dataset_mode == '190k'
             if not realfake190k_root_dir:
                 raise ValueError("realfake190k_root_dir must be provided")
@@ -164,21 +188,19 @@ class Dataset_selector(Dataset):
             def collect_images_from_folder(split):
                 data = []
                 for label in ['Real', 'Fake']:
-                    folder_path = os.path.join(root_dir, split, label)
+                    folder_path = os.path.join(root_dir, split, label )
                     if not os.path.exists(folder_path):
                         raise FileNotFoundError(f"Folder not found: {folder_path}")
                     for img_name in os.listdir(folder_path):
                         if img_name.endswith(('.jpg', '.jpeg', '.png')):
                             img_path = os.path.join(split, label, img_name)
-                            data.append({'path': img_path, 'label': label})
+                            data.append({'images_id': img_path, 'label': label})
                 return pd.DataFrame(data)
 
-  
             train_data = collect_images_from_folder('Train')
             val_data = collect_images_from_folder('Validation')
             test_data = collect_images_from_folder('Test')
 
-   
             train_data = train_data.sample(frac=1, random_state=None).reset_index(drop=True)
             val_data = val_data.sample(frac=1, random_state=None).reset_index(drop=True)
             test_data = test_data.sample(frac=1, random_state=None).reset_index(drop=True)
@@ -214,8 +236,8 @@ class Dataset_selector(Dataset):
         # Create data loaders with DDP support for all loaders
         if ddp:
             train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=True)
-            val_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset, shuffle=True)  
-            test_sampler = torch.utils.data.distributed.DistributedSampler(test_dataset, shuffle=True)  
+            val_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset, shuffle=True)
+            test_sampler = torch.utils.data.distributed.DistributedSampler(test_dataset, shuffle=True)
             
             self.loader_train = DataLoader(
                 train_dataset, 
@@ -249,14 +271,14 @@ class Dataset_selector(Dataset):
             self.loader_val = DataLoader(
                 val_dataset, 
                 batch_size=eval_batch_size, 
-                shuffle=True,  # تغییر به True
+                shuffle=False,  # Changed to False for evaluation
                 num_workers=num_workers, 
                 pin_memory=pin_memory,
             )
             self.loader_test = DataLoader(
                 test_dataset, 
                 batch_size=eval_batch_size, 
-                shuffle=True,  # تغییر به True
+                shuffle=False,  # Changed to False for evaluation
                 num_workers=num_workers, 
                 pin_memory=pin_memory,
             )
@@ -312,7 +334,19 @@ if __name__ == "__main__":
     # Example for 190k Real and Fake Faces
     dataset_190k = Dataset_selector(
         dataset_mode='190k',
-        realfake190k_root_dir='/kaggle/input/deepfake-and-real-images/Dataset', 
+        realfake190k_root_dir='/kaggle/input/deepfake-and-real-images/Dataset',
+        train_batch_size=64,
+        eval_batch_size=64,
+        ddp=True,
+    )
+
+    # Example for 200k Real and Fake Faces
+    dataset_200k = Dataset_selector(
+        dataset_mode='200k',
+        realfake200k_train_csv='/kaggle/input/200k-real-and-fake-faces/train.csv',
+        realfake200k_val_csv='/kaggle/input/200k-real-and-fake-faces/valid.csv',
+        realfake200k_test_csv='/kaggle/input/200k-real-and-fake-faces/test.csv',
+        realfake200k_root_dir='/kaggle/input/200k-real-and-fake-faces',
         train_batch_size=64,
         eval_batch_size=64,
         ddp=True,
