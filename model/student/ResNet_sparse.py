@@ -38,8 +38,9 @@ class SoftMaskedConv2d(nn.Module):
     def compute_mask(self, ticket):
         if torch.isnan(self.mask_weight).any():
             print(f"NaN in mask_weight")
+
         if torch.isinf(self.mask_weight).any():
-            print(f"Inf in mask_weight")
+             print(f"Inf in mask_weight")
         
         if ticket:
             mask = torch.argmax(self.mask_weight, dim=1).float().view(-1, 1, 1, 1)
@@ -107,8 +108,7 @@ class MaskedNet(nn.Module):
             "hardfakevsrealfaces": 300,
             "rvf10k": 256,
             "140k": 256,
-            "190k": 256,
-            "125k": 160  # اضافه کردن اندازه تصویر برای دیتاست 125k
+            "190k": 256  # Updated to include 190k dataset
         }
         dataset_type = getattr(self, "dataset_type", "hardfakevsrealfaces")
         input_size = image_sizes.get(dataset_type, 256)
@@ -269,12 +269,7 @@ class ResNet_sparse(MaskedNet):
         self.layer2 = self._make_layer(block, 128, num_blocks[1], stride=2, layer_prefix="layer2")
         self.layer3 = self._make_layer(block, 256, num_blocks[2], stride=2, layer_prefix="layer3")
         self.layer4 = self._make_layer(block, 512, num_blocks[3], stride=2, layer_prefix="layer4")
-        
-        #if dataset_type == "125k":
-         #   self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        #else:
-         #   self.avgpool = nn.Sequential(nn.AvgPool2d(7))
-        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.avgpool = nn.Sequential(nn.AvgPool2d(7))
         self.fc = nn.Linear(512 * block.expansion, num_classes)
 
         if block == BasicBlock_sparse:
@@ -335,4 +330,17 @@ def ResNet_50_sparse_hardfakevsreal(
         gumbel_end_temperature=gumbel_end_temperature,
         num_epochs=num_epochs,
         dataset_type="hardfakevsrealfaces"
+    )
+
+def ResNet_50_sparse_rvf10k(
+    gumbel_start_temperature=2.0, gumbel_end_temperature=0.5, num_epochs=200
+):
+    return ResNet_sparse(
+        block=Bottleneck_sparse,
+        num_blocks=[3, 4, 6, 3],
+        num_classes=1,
+        gumbel_start_temperature=gumbel_start_temperature,
+        gumbel_end_temperature=gumbel_end_temperature,
+        num_epochs=num_epochs,
+        dataset_type="rvf10k"
     )
