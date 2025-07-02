@@ -12,7 +12,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from torch.cuda.amp import autocast, GradScaler
 from data.dataset import Dataset_selector
-from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
+from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k
 from utils import utils, loss, meter, scheduler
 from thop import profile
 from model.teacher.ResNet import ResNet_50_hardfakevsreal
@@ -27,8 +27,7 @@ Flops_baselines = {
         "140k": 5390.0,
         "200k": 5390.0,
         "190k": 5390.0,
-        "330k": 5390.0,
-        "125k": 2110.0,  # Updated for 125k dataset
+        "330k": 5390.0, 
     }
 }
 
@@ -91,12 +90,8 @@ class TrainDDP:
             self.args.dataset_type = "330k"
             self.num_classes = 1
             self.image_size = 256
-        elif self.dataset_mode == "125k":
-            self.args.dataset_type = "125k"
-            self.num_classes = 1
-            self.image_size = 160
         else:
-            raise ValueError("dataset_mode must be 'hardfake', 'rvf10k', '140k', '200k', '190k', '330k', or '125k'")
+            raise ValueError("dataset_mode must be 'hardfake', 'rvf10k', '140k', '200k', '190k', or '330k'")
 
     def dist_init(self):
         dist.init_process_group("nccl")
@@ -136,8 +131,8 @@ class TrainDDP:
             torch.backends.cudnn.enabled = True
 
     def dataload(self):
-        if self.dataset_mode not in ['hardfake', 'rvf10k', '140k', '200k', '190k', '330k', '125k']:
-            raise ValueError("dataset_mode must be 'hardfake', 'rvf10k', '140k', '200k', '190k', '330k', or '125k'")
+        if self.dataset_mode not in ['hardfake', 'rvf10k', '140k', '200k', '190k', '330k']:
+            raise ValueError("dataset_mode must be 'hardfake', 'rvf10k', '140k', '200k', '190k', or '330k'")
 
         hardfake_csv_file = None
         hardfake_root_dir = None
@@ -154,7 +149,6 @@ class TrainDDP:
         realfake200k_root_dir = None
         realfake190k_root_dir = None
         realfake330k_root_dir = None
-        realfake125k_root_dir = None
 
         if self.dataset_mode == 'hardfake':
             hardfake_csv_file = os.path.join(self.dataset_dir, 'data.csv')
@@ -202,10 +196,6 @@ class TrainDDP:
             realfake330k_root_dir = self.dataset_dir
             if self.rank == 0 and not os.path.exists(realfake330k_root_dir):
                 raise FileNotFoundError(f"330k dataset directory not found: {realfake330k_root_dir}")
-        elif self.dataset_mode == '125k':
-            realfake125k_root_dir = self.dataset_dir
-            if self.rank == 0 and not os.path.exists(realfake125k_root_dir):
-                raise FileNotFoundError(f"125k dataset directory not found: {realfake125k_root_dir}")
 
         if self.rank == 0:
             self.logger.info(f"Loading dataset: {self.dataset_mode}")
@@ -220,14 +210,13 @@ class TrainDDP:
             realfake140k_train_csv=realfake140k_train_csv,
             realfake140k_valid_csv=realfake140k_valid_csv,
             realfake140k_test_csv=realfake140k_test_csv,
-            realfake140k_root_dir=realfake140k_root_dir,  # Fixed typo
+            realfake140k_root_dir=realfake140k_root_dir,
             realfake200k_train_csv=realfake200k_train_csv,
             realfake200k_val_csv=realfake200k_val_csv,
             realfake200k_test_csv=realfake200k_test_csv,
             realfake200k_root_dir=realfake200k_root_dir,
             realfake190k_root_dir=realfake190k_root_dir,
             realfake330k_root_dir=realfake330k_root_dir,
-            realfake125k_root_dir=realfake125k_root_dir,
             train_batch_size=self.train_batch_size,
             eval_batch_size=self.eval_batch_size,
             num_workers=self.num_workers,
@@ -249,18 +238,7 @@ class TrainDDP:
         resnet = ResNet_50_hardfakevsreal()
         ckpt_teacher = torch.load(self.teacher_ckpt_path, map_location="cpu", weights_only=True)
         state_dict = ckpt_teacher.get('config_state_dict', ckpt_teacher)
-    
-
-        new_state_dict = {}
-        for key, value in state_dict.items():
-            if key == "fc.1.weight":
-                new_state_dict["fc.weight"] = value
-            elif key == "fc.1.bias":
-                new_state_dict["fc.bias"] = value
-            else:
-                new_state_dict[key] = value
-    
-        resnet.load_state_dict(new_state_dict, strict=True)
+        resnet.load_state_dict(state_dict, strict=True)
         self.teacher = resnet.cuda()
 
         if self.rank == 0:
@@ -282,21 +260,26 @@ class TrainDDP:
 
         if self.rank == 0:
             self.logger.info("Building student model")
-        
-        self.student = ResNet_50_sparse_hardfakevsreal(
-            gumbel_start_temperature=self.gumbel_start_temperature,
-            gumbel_end_temperature=self.gumbel_end_temperature,
-            num_epochs=self.num_epochs,
-        )
-      
+        if self.dataset_mode == "hardfake":
+            self.student = ResNet_50_sparse_hardfakevsreal(
+                gumbel_start_temperature=self.gumbel_start_temperature,
+                gumbel_end_temperature=self.gumbel_end_temperature,
+                num_epochs=self.num_epochs,
+            )
+        else:  # rvf10k, 140k, 200k, 190k, or 330k
+            self.student = ResNet_50_sparse_rvf10k(
+                gumbel_start_temperature=self.gumbel_start_temperature,
+                gumbel_end_temperature=self.gumbel_end_temperature,
+                num_epochs=self.num_epochs,
+            )
         self.student.dataset_type = self.args.dataset_type
         num_ftrs = self.student.fc.in_features
         self.student.fc = nn.Linear(num_ftrs, 1)
         self.student = self.student.cuda()
-        self.student = DDP(self.student, device_ids=[self.local_rank])  # Fixed typo
+        self.student = DDP(self.student, device_ids=[self.local_rank])
 
     def define_loss(self):
-        self.ori_loss = nn.BCEWithLogitsLoss().cuda()  # Fixed typo
+        self.ori_loss = nn.BCEWithLogitsLoss().cuda()
         self.kd_loss = loss.KDLoss().cuda()
         self.rc_loss = loss.RCLoss().cuda()
         self.mask_loss = loss.MaskLoss().cuda()
@@ -377,7 +360,7 @@ class TrainDDP:
                     ckpt_student,
                     os.path.join(folder, self.arch + "_sparse_best.pt"),
                 )
-            torch.save(ckpt_student, os.path.join(folder, self.arch + "_sparse_last.pt"))  # Fixed typo
+            torch.save(ckpt_student, os.path.join(folder, self.arch + "_sparse_last.pt"))
 
     def reduce_tensor(self, tensor):
         rt = tensor.clone()
@@ -535,7 +518,7 @@ class TrainDDP:
                 self.writer.add_scalar("train/loss/mask_loss", meter_maskloss.avg, global_step=epoch)
                 self.writer.add_scalar("train/loss/total_loss", meter_loss.avg, global_step=epoch)
                 self.writer.add_scalar("train/acc/top1", meter_top1.avg, global_step=epoch)
-                self.writer.add_scalar("train/lr/lr", lr, global_step=epoch)  # Fixed typo
+                self.writer.add_scalar("train/lr/lr", lr, global_step=epoch)
                 self.writer.add_scalar("train/temperature/gumbel_temperature", self.student.module.gumbel_temperature, global_step=epoch)
                 self.writer.add_scalar("train/Flops", Flops, global_step=epoch)
 
