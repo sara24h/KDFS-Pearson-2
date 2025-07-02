@@ -4,10 +4,14 @@ import torchvision.transforms as transforms
 import os
 import pandas as pd
 from PIL import Image
-from sklearn.model_selection import train_test_split
 from torch.utils.data.distributed import DistributedSampler
 import glob
 import argparse
+import torch.distributed as dist
+
+def is_main_process():
+    """Check if the current process is the main process (rank 0)."""
+    return not dist.is_initialized() or dist.get_rank() == 0
 
 class FaceDataset(Dataset):
     def __init__(self, data_frame, root_dir, transform=None, img_column='filename'):
@@ -33,7 +37,7 @@ class FaceDataset(Dataset):
             full_path = os.path.join(self.root_dir, img_path.lstrip('/'))
             if not os.path.exists(full_path):
                 missing_images.append(full_path)
-        if missing_images:
+        if missing_images and is_main_process():
             print(f"Warning: {len(missing_images)} images not found in {self.root_dir}")
             print("Sample missing images:", missing_images[:5])
 
@@ -44,7 +48,8 @@ class FaceDataset(Dataset):
         img_path = self.data[self.img_column].iloc[idx].lstrip('/')
         img_name = os.path.join(self.root_dir, img_path)
         if not os.path.exists(img_name):
-            print(f"Warning: Image not found: {img_name}, returning None")
+            if is_main_process():
+                print(f"Warning: Image not found: {img_name}, returning None")
             return None, None  # Handle this in the training loop
         image = Image.open(img_name).convert('RGB')
         label = self.label_map.get(self.data['label'].iloc[idx], self.data['label'].iloc[idx])
@@ -144,8 +149,9 @@ class Dataset_selector:
         if dataset_mode == 'rvf10k':
             if not rvf10k_train_csv or not rvf10k_valid_csv or not rvf10k_root_dir:
                 raise ValueError("rvf10k_train_csv, rvf10k_valid_csv, and rvf10k_root_dir must be provided")
-            print(f"Loading train CSV from: {rvf10k_train_csv}")
-            print(f"Loading valid CSV from: {rvf10k_valid_csv}")
+            if is_main_process():
+                print(f"Loading train CSV from: {rvf10k_train_csv}")
+                print(f"Loading valid CSV from: {rvf10k_valid_csv}")
             train_data = pd.read_csv(rvf10k_train_csv)
             valid_data = pd.read_csv(rvf10k_valid_csv)
             root_dir = rvf10k_root_dir
@@ -158,12 +164,13 @@ class Dataset_selector:
             train_data['path'] = train_data.apply(lambda row: create_image_path(row, 'train'), axis=1)
             valid_data['path'] = valid_data.apply(lambda row: create_image_path(row, 'valid'), axis=1)
 
-            for path in train_data['path'].head():
-                full_path = os.path.join(root_dir, path)
-                print(f"Checking train image {full_path}: {'Exists' if os.path.exists(full_path) else 'Not Found'}")
-            for path in valid_data['path'].head():
-                full_path = os.path.join(root_dir, path)
-                print(f"Checking valid image {full_path}: {'Exists' if os.path.exists(full_path) else 'Not Found'}")
+            if is_main_process():
+                for path in train_data['path'].head():
+                    full_path = os.path.join(root_dir, path)
+                    print(f"Checking train image {full_path}: {'Exists' if os.path.exists(full_path) else 'Not Found'}")
+                for path in valid_data['path'].head():
+                    full_path = os.path.join(root_dir, path)
+                    print(f"Checking valid image {full_path}: {'Exists' if os.path.exists(full_path) else 'Not Found'}")
 
             if rvf10k_test_csv and os.path.exists(rvf10k_test_csv):
                 test_data = pd.read_csv(rvf10k_test_csv)
@@ -211,9 +218,9 @@ class Dataset_selector:
             if not realfake200k_train_csv or not realfake200k_val_csv or not realfake200k_test_csv or not realfake200k_root_dir:
                 raise ValueError("realfake200k_train_csv, realfake200k_val_csv, realfake200k_test_csv, and realfake200k_root_dir must be provided")
             train_data = pd.read_csv(realfake200k_train_csv)
-            val_data = pd.read_csv(realfake200k_val_csv)  # Fixed typo: realfake.codes200k_val_csv
+            val_data = pd.read_csv(realfake200k_val_csv)
             test_data = pd.read_csv(realfake200k_test_csv)
-            root_dir = realfake200k_root_dir  # Fixed typo: realDongfake200k_root_dir
+            root_dir = realfake200k_root_dir
 
             def create_image_path(row):
                 folder = 'real' if row['label'] == 1 else 'ai_images'
@@ -229,16 +236,23 @@ class Dataset_selector:
                 raise ValueError("realfake190k_root_dir must be provided")
             root_dir = realfake190k_root_dir
 
+            # Collect images from pre-split directories
             def create_dataframe(split):
                 data = {'filename': [], 'label': []}
                 real_path = os.path.join(root_dir, split, 'Real')
                 fake_path = os.path.join(root_dir, split, 'Fake')
 
-                for img_path in glob.glob(os.path.join(real_path, 'real_*.jpg')):
+                real_images = glob.glob(os.path.join(real_path, 'real_*.jpg'))
+                fake_images = glob.glob(os.path.join(fake_path, 'fake_*.jpg'))
+
+                if is_main_process():
+                    print(f"{split} - Found {len(real_images)} real images")
+                    print(f"{split} - Found {len(fake_images)} fake images")
+
+                for img_path in real_images:
                     data['filename'].append(os.path.relpath(img_path, root_dir))
                     data['label'].append(1)  # Real = 1
-
-                for img_path in glob.glob(os.path.join(fake_path, 'fake_*.jpg')):
+                for img_path in fake_images:
                     data['filename'].append(os.path.relpath(img_path, root_dir))
                     data['label'].append(0)  # Fake = 0
 
@@ -251,10 +265,21 @@ class Dataset_selector:
             val_data = create_dataframe('Validation')
             test_data = create_dataframe('Test')
 
+            # Check for data leakage by verifying no overlap between splits
+            train_files = set(train_data['filename'])
+            val_files = set(val_data['filename'])
+            test_files = set(test_data['filename'])
+            if is_main_process():
+                print("Overlap between Train and Validation:", len(train_files & val_files))
+                print("Overlap between Train and Test:", len(train_files & test_files))
+                print("Overlap between Validation and Test:", len(val_files & test_files))
+                if len(train_files & val_files) > 0 or len(train_files & test_files) > 0 or len(val_files & test_files) > 0:
+                    print("Warning: Data leakage detected! Overlapping images found between splits.")
+
         elif dataset_mode == '12.9k':
             if not dataset_12_9k_csv_file or not dataset_12_9k_root_dir:
                 raise ValueError("dataset_12_9k_csv_file and dataset_12_9k_root_dir must be provided")
-            full_data = pd.read_csv(dataset_12_9k_csv_file)  # Fixed typo: dataset Hawkinsdataset_12_9k_csv_file
+            full_data = pd.read_csv(dataset_12_9k_csv_file)
             root_dir = dataset_12_9k_root_dir
 
             full_data['path'] = full_data['path'].str.replace('/kaggle/input/stylegan-and-stylegan2-combined-dataset/', '')
@@ -277,11 +302,17 @@ class Dataset_selector:
                 real_path = os.path.join(root_dir, split, 'Real')
                 fake_path = os.path.join(root_dir, split, 'Fake')
 
-                for img_path in glob.glob(os.path.join(real_path, '*.jpg')):
+                real_images = glob.glob(os.path.join(real_path, '*.jpg'))
+                fake_images = glob.glob(os.path.join(fake_path, '*.jpg'))
+
+                if is_main_process():
+                    print(f"{split} - Found {len(real_images)} real images")
+                    print(f"{split} - Found {len(fake_images)} fake images")
+
+                for img_path in real_images:
                     data['filename'].append(os.path.relpath(img_path, root_dir))
                     data['label'].append(1)  # Real = 1
-
-                for img_path in glob.glob(os.path.join(fake_path, '*.jpg')):
+                for img_path in fake_images:
                     data['filename'].append(os.path.relpath(img_path, root_dir))
                     data['label'].append(0)  # Fake = 0
 
@@ -311,9 +342,10 @@ class Dataset_selector:
                 for s in possible_splits:
                     temp_real = os.path.join(root_dir, s, 'real')
                     temp_fake = os.path.join(root_dir, s, 'fake')
-                    print(f"Checking split: {s}, Real folder: real, Fake folder: fake")
-                    print(f"Real path: {temp_real}, Exists: {os.path.exists(temp_real)}")
-                    print(f"Fake path: {temp_fake}, Exists: {os.path.exists(temp_fake)}")
+                    if is_main_process():
+                        print(f"Checking split: {s}, Real folder: real, Fake folder: fake")
+                        print(f"Real path: {temp_real}, Exists: {os.path.exists(temp_real)}")
+                        print(f"Fake path: {temp_fake}, Exists: {os.path.exists(temp_fake)}")
                     if os.path.exists(temp_real) and os.path.exists(temp_fake):
                         real_path = temp_real
                         fake_path = temp_fake
@@ -321,14 +353,16 @@ class Dataset_selector:
                 else:
                     raise FileNotFoundError(f"No valid split directory found for {split} in {root_dir}")
 
-                print(f"Selected real path: {real_path}")
-                print(f"Selected fake path: {fake_path}")
+                if is_main_process():
+                    print(f"Selected real path: {real_path}")
+                    print(f"Selected fake path: {fake_path}")
 
                 for ext in ['*.jpg', '*.jpeg', '*.png']:
                     real_images = glob.glob(os.path.join(real_path, ext))
                     fake_images = glob.glob(os.path.join(fake_path, ext))
-                    print(f"Found {len(real_images)} real images in {real_path} with extension {ext}")
-                    print(f"Found {len(fake_images)} fake images in {fake_path} with extension {ext}")
+                    if is_main_process():
+                        print(f"Found {len(real_images)} real images in {real_path} with extension {ext}")
+                        print(f"Found {len(fake_images)} fake images in {fake_path} with extension {ext}")
 
                     for img_path in real_images:
                         data['filename'].append(os.path.relpath(img_path, root_dir))
@@ -347,7 +381,8 @@ class Dataset_selector:
             try:
                 test_data = create_dataframe('test')
             except FileNotFoundError:
-                print("Warning: Test directory not found, splitting validation data for test")
+                if is_main_process():
+                    print("Warning: Test directory not found, splitting validation data for test")
                 val_data, test_data = train_test_split(
                     val_data, test_size=0.5, stratify=val_data['label'], random_state=3407
                 )
@@ -362,32 +397,33 @@ class Dataset_selector:
         test_data = test_data.reset_index(drop=True)
 
         # Print dataset samples for debugging
-        print(f"Train data sample:\n{train_data.head()}")
-        print(f"Validation data sample:\n{val_data.head()}")
-        print(f"Test data sample:\n{test_data.head()}")
+        if is_main_process():
+            print(f"Train data sample:\n{train_data.head()}")
+            print(f"Validation data sample:\n{val_data.head()}")
+            print(f"Test data sample:\n{test_data.head()}")
 
-        # Calculate and print dataset split percentages
-        total_images = len(train_data) + len(val_data) + len(test_data)
-        train_percent = (len(train_data) / total_images) * 100 if total_images > 0 else 0
-        val_percent = (len(val_data) / total_images) * 100 if total_images > 0 else 0
-        test_percent = (len(test_data) / total_images) * 100 if total_images > 0 else 0
+            # Calculate and print dataset split percentages
+            total_images = len(train_data) + len(val_data) + len(test_data)
+            train_percent = (len(train_data) / total_images) * 100 if total_images > 0 else 0
+            val_percent = (len(val_data) / total_images) * 100 if total_images > 0 else 0
+            test_percent = (len(test_data) / total_images) * 100 if total_images > 0 else 0
 
-        print(f"{dataset_mode} dataset split percentages:")
-        print(f"Training: {train_percent:.2f}% ({len(train_data)} images)")
-        print(f"Validation: {val_percent:.2f}% ({len(val_data)} images)")
-        print(f"Test: {test_percent:.2f}% ({len(test_data)} images)")
+            print(f"{dataset_mode} dataset split percentages:")
+            print(f"Training: {train_percent:.2f}% ({len(train_data)} images)")
+            print(f"Validation: {val_percent:.2f}% ({len(val_data)} images)")
+            print(f"Test: {test_percent:.2f}% ({len(test_data)} images)")
 
-        # Print dataset statistics
-        print(f"{dataset_mode} dataset statistics:")
-        print(f"Sample train image paths:\n{train_data[img_column].head()}")
-        print(f"Total train dataset size: {len(train_data)}")
-        print(f"Train label distribution:\n{train_data['label'].value_counts()}")
-        print(f"Sample validation image paths:\n{val_data[img_column].head()}")
-        print(f"Total validation dataset size: {len(val_data)}")
-        print(f"Validation label distribution:\n{val_data['label'].value_counts()}")
-        print(f"Sample test image paths:\n{test_data[img_column].head()}")
-        print(f"Total test dataset size: {len(test_data)}")
-        print(f"Test label distribution:\n{test_data['label'].value_counts()}")
+            # Print dataset statistics
+            print(f"{dataset_mode} dataset statistics:")
+            print(f"Sample train image paths:\n{train_data[img_column].head()}")
+            print(f"Total train dataset size: {len(train_data)}")
+            print(f"Train label distribution:\n{train_data['label'].value_counts()}")
+            print(f"Sample validation image paths:\n{val_data[img_column].head()}")
+            print(f"Total validation dataset size: {len(val_data)}")
+            print(f"Validation label distribution:\n{val_data['label'].value_counts()}")
+            print(f"Sample test image paths:\n{test_data[img_column].head()}")
+            print(f"Total test dataset size: {len(test_data)}")
+            print(f"Test label distribution:\n{test_data['label'].value_counts()}")
 
         # Create datasets
         train_dataset = FaceDataset(train_data, root_dir, transform=transform_train, img_column=img_column)
@@ -397,8 +433,8 @@ class Dataset_selector:
         # Set up DataLoader
         if ddp:
             train_sampler = DistributedSampler(train_dataset, shuffle=True)
-            val_sampler = DistributedSampler(val_dataset, shuffle=True)
-            test_sampler = DistributedSampler(test_dataset, shuffle=False)
+            val_sampler = DistributedSampler(val_dataset, shuffle=False)
+            test_sampler = DistributedSampler(test_dataset, shuffle=False)  # Shuffle enabled for test to ensure balanced batches
 
             self.loader_train = DataLoader(
                 train_dataset,
@@ -439,29 +475,50 @@ class Dataset_selector:
             self.loader_test = DataLoader(
                 test_dataset,
                 batch_size=eval_batch_size,
-                shuffle=False,
+                shuffle=True,  # Shuffle enabled for test to ensure balanced batches
                 num_workers=num_workers,
                 pin_memory=pin_memory,
             )
 
-        print(f"Number of train batches: {len(self.loader_train)}")
-        print(f"Number of validation batches: {len(self.loader_val)}")
-        print(f"Number of test batches: {len(self.loader_test)}")
+        if is_main_process():
+            print(f"Number of train batches: {len(self.loader_train)}")
+            print(f"Number of validation batches: {len(self.loader_val)}")
+            print(f"Number of test batches: {len(self.loader_test)}")
 
-        # Check sample batches with label distribution
-        for loader, name in [(self.loader_train, 'train'), (self.loader_val, 'validation'), (self.loader_test, 'test')]:
-            try:
-                sample = next(iter(loader))
-                if sample[0] is None or sample[1] is None:
-                    print(f"Warning: Sample {name} batch contains None values")
-                else:
-                    print(f"Sample {name} batch image shape: {sample[0].shape}")
-                    print(f"Sample {name} batch labels: {sample[1]}")
-                    print(f"{name} batch label distribution: {torch.bincount(sample[1].int())}")
-            except Exception as e:
-                print(f"Error loading sample {name} batch: {e}")
+            # Check sample batches with label distribution
+            for loader, name in [(self.loader_train, 'train'), (self.loader_val, 'validation'), (self.loader_test, 'test')]:
+                try:
+                    sample = next(iter(loader))
+                    if sample[0] is None or sample[1] is None:
+                        print(f"Warning: Sample {name} batch contains None values")
+                    else:
+                        print(f"Sample {name} batch image shape: {sample[0].shape}")
+                        print(f"Sample {name} batch labels: {sample[1]}")
+                        print(f"{name} batch label distribution: {torch.bincount(sample[1].int())}")
+                except Exception as e:
+                    print(f"Error loading sample {name} batch: {e}")
+
+            # Additional check: Full label distribution in test dataset
+            all_test_labels = []
+            for batch in self.loader_test:
+                _, labels = batch
+                if labels is not None:
+                    all_test_labels.extend(labels.int().tolist())
+            if is_main_process():
+                print("Full test dataset label distribution:", pd.Series(all_test_labels).value_counts())
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Dataset selector for various datasets")
+    parser.add_argument('--dataset_mode', type=str, default='190k', help='Dataset mode: hardfake, rvf10k, 140k, 200k, 190k, 12.9k, 330k, 125k')
+    parser.add_argument('--data_dir', type=str, default='/kaggle/input/deepfake-and-real-images/Dataset', help='Root directory for dataset')
+    parser.add_argument('--batch_size', type=int, default=128, help='Batch size for training and evaluation')
+    parser.add_argument('--num_workers', type=int, default=4, help='Number of workers for DataLoader')
+    parser.add_argument('--ddp', action='store_true', help='Enable Distributed Data Parallel')
+    
+    args = parser.parse_args()
+
+    if args.ddp:
+        dist.init_process_group(backend='nccl', init_method='env://')
 
     if args.dataset_mode == 'hardfake':
         if not args.hardfake_csv_file or not args.hardfake_root_dir:
@@ -472,7 +529,8 @@ if __name__ == "__main__":
             hardfake_root_dir=args.hardfake_root_dir,
             train_batch_size=args.batch_size,
             eval_batch_size=args.batch_size,
-            ddp=True,
+            num_workers=args.num_workers,
+            ddp=args.ddp,
         )
     elif args.dataset_mode == 'rvf10k':
         if not args.rvf10k_train_csv or not args.rvf10k_valid_csv or not args.rvf10k_root_dir:
@@ -485,7 +543,8 @@ if __name__ == "__main__":
             rvf10k_root_dir=args.rvf10k_root_dir,
             train_batch_size=args.batch_size,
             eval_batch_size=args.batch_size,
-            ddp=True,
+            num_workers=args.num_workers,
+            ddp=args.ddp,
         )
     elif args.dataset_mode == '140k':
         if not args.realfake140k_train_csv or not args.realfake140k_valid_csv or not args.realfake140k_test_csv or not args.realfake140k_root_dir:
@@ -498,7 +557,8 @@ if __name__ == "__main__":
             realfake140k_root_dir=args.realfake140k_root_dir,
             train_batch_size=args.batch_size,
             eval_batch_size=args.batch_size,
-            ddp=True,
+            num_workers=args.num_workers,
+            ddp=args.ddp,
         )
     elif args.dataset_mode == '200k':
         if not args.realfake200k_train_csv or not args.realfake200k_val_csv or not args.realfake200k_test_csv or not args.realfake200k_root_dir:
@@ -511,7 +571,8 @@ if __name__ == "__main__":
             realfake200k_root_dir=args.realfake200k_root_dir,
             train_batch_size=args.batch_size,
             eval_batch_size=args.batch_size,
-            ddp=True,
+            num_workers=args.num_workers,
+            ddp=args.ddp,
         )
     elif args.dataset_mode == '190k':
         if not args.data_dir:
@@ -521,7 +582,8 @@ if __name__ == "__main__":
             realfake190k_root_dir=args.data_dir,
             train_batch_size=args.batch_size,
             eval_batch_size=args.batch_size,
-            ddp=True,
+            num_workers=args.num_workers,
+            ddp=args.ddp,
         )
     elif args.dataset_mode == '12.9k':
         if not args.dataset_12_9k_csv_file or not args.dataset_12_9k_root_dir:
@@ -532,7 +594,8 @@ if __name__ == "__main__":
             dataset_12_9k_root_dir=args.dataset_12_9k_root_dir,
             train_batch_size=args.batch_size,
             eval_batch_size=args.batch_size,
-            ddp=True,
+            num_workers=args.num_workers,
+            ddp=args.ddp,
         )
     elif args.dataset_mode == '330k':
         if not args.data_dir:
@@ -542,7 +605,8 @@ if __name__ == "__main__":
             realfake330k_root_dir=args.data_dir,
             train_batch_size=args.batch_size,
             eval_batch_size=args.batch_size,
-            ddp=True,
+            num_workers=args.num_workers,
+            ddp=args.ddp,
         )
     elif args.dataset_mode == '125k':
         if not args.data_dir:
@@ -552,5 +616,9 @@ if __name__ == "__main__":
             realfake125k_root_dir=args.data_dir,
             train_batch_size=args.batch_size,
             eval_batch_size=args.batch_size,
-            ddp=True,
+            num_workers=args.num_workers,
+            ddp=args.ddp,
         )
+
+    if args.ddp:
+        dist.destroy_process_group()
