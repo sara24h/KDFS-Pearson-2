@@ -10,9 +10,10 @@ Flops_baselines = {
         "hardfakevsreal": 7700.0,
         "rvf10k": 5000.0,
         "140k": 5390.0,
-        "200k":5390,
-        "330k":5390,
-        "125k":2100,
+        "190k": 5390.0,  # Added for 190k
+        "200k": 5390.0,
+        "330k": 5390.0,
+        "125k": 2100.0,
     }
 }
 Params_baselines = {
@@ -20,18 +21,20 @@ Params_baselines = {
         "hardfakevsreal": 14.97,
         "rvf10k": 25.50,
         "140k": 23.51,
-        "200k":23.51,
-        "330k":23.51,
-        "125k":23.51,
+        "190k": 23.51,  # Added for 190k
+        "200k": 23.51,
+        "330k": 23.51,
+        "125k": 23.51,
     }
 }
 image_sizes = {
     "hardfakevsreal": 300,
     "rvf10k": 256,
     "140k": 256,
-    "200k":256,
-    "330k":256,
-    "125k":160,
+    "190k": 256,  # Added for 190k
+    "200k": 256,
+    "330k": 256,
+    "125k": 160,
 }
 
 def parse_args():
@@ -40,7 +43,7 @@ def parse_args():
         "--dataset_mode",
         type=str,
         default="hardfake",
-        choices=("hardfake", "rvf10k", "140k","200k","330k","125k"),
+        choices=("hardfake", "rvf10k", "140k", "190k", "200k", "330k", "125k"),
         help="The type of dataset",
     )
     parser.add_argument(
@@ -57,9 +60,10 @@ def get_flops_and_params(args):
         "hardfake": "hardfakevsreal",
         "rvf10k": "rvf10k",
         "140k": "140k",
-        "200k":"200k",
-        "330k":"330k",
-        "125k":"125k"
+        "190k": "190k",  # Added for 190k
+        "200k": "200k",
+        "330k": "330k",
+        "125k": "125k"
     }[args.dataset_mode]
 
     # Load sparse student model to extract masks
@@ -104,7 +108,7 @@ def main():
     args = parse_args()
 
     # Run for all datasets
-    for dataset_mode in ["hardfake", "rvf10k", "140k","200k","330k","125k"]:
+    for dataset_mode in ["hardfake", "rvf10k", "140k", "190k", "200k", "330k", "125k"]:
         print(f"\nEvaluating for dataset: {dataset_mode}")
         args.dataset_mode = dataset_mode
         (
