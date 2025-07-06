@@ -53,6 +53,7 @@ class MaskedNet(nn.Module):
             m.update_gumbel_temperature(self.gumbel_temperature)
 
     def get_flops(self):
+        dataset_type = getattr(self, "dataset_type", "hardfakevsrealfaces")
         Flops_total = torch.tensor(0)
         # Flops_conv = feature_map_h * feature_map_w * k * k * c_in * c_out
         # Flops_bn = feature_map_h * feature_map_w * c_in
@@ -217,6 +218,7 @@ class ResNet_sparse(MaskedNet):
         gumbel_start_temperature=2,
         gumbel_end_temperature=0.1,
         num_epochs=350,
+        dataset_type="hardfakevsrealfaces"
     ):
         super().__init__(
             gumbel_start_temperature,
@@ -224,6 +226,7 @@ class ResNet_sparse(MaskedNet):
             num_epochs,
         )
         self.in_planes = 64
+        self.dataset_type = dataset_type
 
         self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
         self.bn1 = nn.BatchNorm2d(64)
