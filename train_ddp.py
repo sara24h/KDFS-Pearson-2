@@ -390,12 +390,8 @@ class TrainDDP:
                 for data in self.train_loader:
                     self.optim_weight.zero_grad()
                     self.optim_mask.zero_grad()
-                    if self.dali:
-                        images = data[0]["data"].cuda()
-                        targets = data[0]["label"].squeeze().long().cuda()
-                    else:
-                        images = data[0].cuda()
-                        targets = data[1].cuda()
+                    images = data[0].cuda()
+                    targets = data[1].cuda()
                     logits_student, feature_list_student = self.student(images)
                     with torch.no_grad():
                         logits_teacher, feature_list_teacher = self.teacher(images)
