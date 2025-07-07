@@ -20,17 +20,6 @@ from torch import amp
 
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 
-Flops_baselines = {
-    "ResNet_50": {
-        "hardfakevsrealfaces": 7700.0,
-        "rvf10k": 5000,
-        "140k": 5390.0,
-        "200k": 5390.0,
-        "190k": 5390.0,
-        "330k": 5390.0, 
-    }
-}
-
 class TrainDDP:
     def __init__(self, args):
         self.args = args
@@ -239,27 +228,10 @@ class TrainDDP:
             self.logger.info("Loading teacher model")
 
         resnet = ResNet_50_hardfakevsreal()
-        ckpt_teacher = torch.load(self.teacher_ckpt_path, map_location="cpu", weights_only=True)
+        ckpt_teacher = torch.load(self.teacher_ckpt_path, map_location="cpu")
         state_dict = ckpt_teacher.get('config_state_dict', ckpt_teacher)
         resnet.load_state_dict(state_dict, strict=True)
         self.teacher = resnet.cuda()
-
-        if self.rank == 0:
-            self.logger.info("Testing teacher model on validation batch...")
-            with torch.no_grad():
-                correct = 0
-                total = 0
-                for images, targets in self.val_loader:
-                    images = images.cuda()
-                    targets = targets.cuda().float()
-                    logits, _ = self.teacher(images)
-                    logits = logits.squeeze(1)
-                    preds = (torch.sigmoid(logits) > 0.5).float()
-                    correct += (preds == targets).sum().item()
-                    total += images.size(0)
-                    break
-                accuracy = 100. * correct / total
-                self.logger.info(f"Teacher accuracy on validation batch: {accuracy:.2f}%")
 
         if self.rank == 0:
             self.logger.info("Building student model")
@@ -269,7 +241,6 @@ class TrainDDP:
             gumbel_end_temperature=self.gumbel_end_temperature,
             num_epochs=self.num_epochs,
             )
-    
 
     def define_loss(self):
         self.ori_loss = nn.BCEWithLogitsLoss().cuda()
@@ -282,14 +253,14 @@ class TrainDDP:
             lambda a: a[1],
             filter(
                 lambda p: p[1].requires_grad and "mask" not in p[0],
-                self.student.module.named_parameters(),
+                self.student.named_parameters(),
             ),
         )
         mask_params = map(
             lambda a: a[1],
             filter(
                 lambda p: p[1].requires_grad and "mask" in p[0],
-                self.student.module.named_parameters(),
+                self.student.named_parameters(),
             ),
         )
 
@@ -321,7 +292,7 @@ class TrainDDP:
         ckpt_student = torch.load(self.resume, map_location="cpu", weights_only=True)
         self.best_prec1 = ckpt_student["best_prec1"]
         self.start_epoch = ckpt_student["start_epoch"]
-        self.student.module.load_state_dict(ckpt_student["student"])
+        self.student.load_state_dict(ckpt_student["student"])
         self.optim_weight.load_state_dict(ckpt_student["optim_weight"])
         self.optim_mask.load_state_dict(ckpt_student["optim_mask"])
         self.scheduler_student_weight.load_state_dict(
@@ -362,6 +333,9 @@ class TrainDDP:
         return rt
 
     def train(self):
+        
+        self.student = DDP(self.student, find_unused_parameters=True)
+        
         if self.rank == 0:
             self.logger.info(f"Starting training from epoch: {self.start_epoch + 1}")
             
