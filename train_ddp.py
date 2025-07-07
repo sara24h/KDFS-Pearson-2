@@ -58,8 +58,6 @@ class TrainDDP:
         self.coef_rcloss = args.coef_rcloss
         self.coef_maskloss = args.coef_maskloss
         self.resume = args.resume
-        self.compress_rate = getattr(args, 'compress_rate', 0.5)  # مقدار پیش‌فرض
-
         self.start_epoch = 0
         self.best_prec1 = 0
         self.world_size = 0
@@ -403,6 +401,7 @@ class TrainDDP:
                     kd_loss = (self.target_temperature**2) * self.kd_loss(
                         logits_teacher / self.target_temperature,
                         logits_student / self.target_temperature,
+                        temperature=self.target_temperature
                     )
 
                     rc_loss = torch.tensor(0)
