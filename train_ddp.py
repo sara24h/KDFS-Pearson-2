@@ -397,6 +397,7 @@ class TrainDDP:
                         logits_teacher, feature_list_teacher = self.teacher(images)
 
                     # loss
+                    logits_student = logits_student.squeeze(1) 
                     ori_loss = self.ori_loss(logits_student, targets)
 
                     kd_loss = (self.target_temperature**2) * self.kd_loss(
