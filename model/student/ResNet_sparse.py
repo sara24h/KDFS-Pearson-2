@@ -196,9 +196,9 @@ class BasicBlock_sparse(nn.Module):
                 nn.BatchNorm2d(self.expansion * planes),
             )
 
-    def forward(self, x, ticket, gumbel_temperature=None):
-        out = F.relu(self.bn1(self.conv1(x, ticket, gumbel_temperature)))
-        out = self.bn2(self.conv2(out, ticket, gumbel_temperature))
+    def forward(self, x, ticket):
+        out = F.relu(self.bn1(self.conv1(x, ticket)))
+        out = self.bn2(self.conv2(out, ticket))
         out += self.downsample(x)
         out = F.relu(out)
         return out
@@ -232,10 +232,10 @@ class Bottleneck_sparse(nn.Module):
                 nn.BatchNorm2d(self.expansion * planes),
             )
 
-    def forward(self, x, ticket, gumbel_temperature=None):
-        out = F.relu(self.bn1(self.conv1(x, ticket, gumbel_temperature)))
-        out = F.relu(self.bn2(self.conv2(out, ticket, gumbel_temperature)))
-        out = self.bn3(self.conv3(out, ticket, gumbel_temperature))
+    def forward(self, x, ticket):
+        out = F.relu(self.bn1(self.conv1(x, ticket)))
+        out = F.relu(self.bn2(self.conv2(out, ticket)))
+        out = self.bn3(self.conv3(out, ticket))
         out += self.downsample(x)
         out = F.relu(out)
         return out
@@ -290,22 +290,27 @@ class ResNet_sparse(MaskedNet):
             self.in_planes = planes * block.expansion
         return nn.Sequential(*layers)
 
-    def forward(self, x, ticket=False, gumbel_temperature=None):
+    def forward(self, x):
         feature_list = []
         out = F.relu(self.bn1(self.conv1(x)))
         out = self.maxpool(out)
+
         for block in self.layer1:
-            out = block(out, ticket, gumbel_temperature)
+            out = block(out, self.ticket)
         feature_list.append(self.feat1(out))
+
         for block in self.layer2:
-            out = block(out, ticket, gumbel_temperature)
+            out = block(out, self.ticket)
         feature_list.append(self.feat2(out))
+
         for block in self.layer3:
-            out = block(out, ticket, gumbel_temperature)
+            out = block(out, self.ticket)
         feature_list.append(self.feat3(out))
+
         for block in self.layer4:
-            out = block(out, ticket, gumbel_temperature)
+            out = block(out, self.ticket)
         feature_list.append(self.feat4(out))
+
         out = self.avgpool(out)
         out = out.view(out.size(0), -1)
         out = self.fc(out)
