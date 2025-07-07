@@ -100,18 +100,22 @@ class TrainDDP:
         torch.cuda.set_device(self.local_rank)
 
     def result_init(self):
+        # tensorboard
         if self.rank == 0:
-            if not os.path.exists(self.result_dir):
-                os.makedirs(self.result_dir)
             self.writer = SummaryWriter(self.result_dir)
+
+            # log
             self.logger = utils.get_logger(
                 os.path.join(self.result_dir, "train_logger.log"), "train_logger"
             )
+
+            # config
             self.logger.info("train config:")
             self.logger.info(str(json.dumps(vars(self.args), indent=4)))
             utils.record_config(
                 self.args, os.path.join(self.result_dir, "train_config.txt")
             )
+
             self.logger.info("--------- Train -----------")
 
     def setup_seed(self):
@@ -259,30 +263,20 @@ class TrainDDP:
 
         if self.rank == 0:
             self.logger.info("Building student model")
-        if self.dataset_mode == "hardfake":
-            self.student = ResNet_50_sparse_hardfakevsreal(
-                gumbel_start_temperature=self.gumbel_start_temperature,
-                gumbel_end_temperature=self.gumbel_end_temperature,
-                num_epochs=self.num_epochs,
+      
+        self.student = ResNet_50_sparse_hardfakevsreal(
+            gumbel_start_temperature=self.gumbel_start_temperature,
+            gumbel_end_temperature=self.gumbel_end_temperature,
+            num_epochs=self.num_epochs,
             )
-        else:  # rvf10k, 140k, 200k, 190k, or 330k
-            self.student = ResNet_50_sparse_rvf10k(
-                gumbel_start_temperature=self.gumbel_start_temperature,
-                gumbel_end_temperature=self.gumbel_end_temperature,
-                num_epochs=self.num_epochs,
-            )
-        self.student.dataset_type = self.args.dataset_type
-        num_ftrs = self.student.fc.in_features
-        self.student.fc = nn.Linear(num_ftrs, 1)
-        self.student = self.student.cuda()
-        self.student = DDP(self.student, device_ids=[self.local_rank])
+    
 
     def define_loss(self):
         self.ori_loss = nn.BCEWithLogitsLoss().cuda()
         self.kd_loss = loss.KDLoss().cuda()
         self.rc_loss = loss.RCLoss().cuda()
-        self.mask_loss = loss.MaskLoss().cuda()
-
+        self.mask_loss = loss.MaskLoss().cuda()  
+        
     def define_optim(self):
         weight_params = map(
             lambda a: a[1],
@@ -370,6 +364,13 @@ class TrainDDP:
     def train(self):
         if self.rank == 0:
             self.logger.info(f"Starting training from epoch: {self.start_epoch + 1}")
+            
+        self.teacher = self.teacher.cuda()
+        self.student = self.student.cuda()
+        self.ori_loss = self.ori_loss.cuda()
+        self.kd_loss = self.kd_loss.cuda()
+        self.rc_loss = self.rc_loss.cuda()
+        self.mask_loss = self.mask_loss.cuda()
 
         torch.cuda.empty_cache()
         self.teacher.eval()
@@ -385,6 +386,8 @@ class TrainDDP:
             meter_maskloss = meter.AverageMeter("MaskLoss", ":.6e")
             meter_loss = meter.AverageMeter("Loss", ":.4e")
             meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
+
+        self.teacher.eval()
 
         for epoch in range(self.start_epoch + 1, self.num_epochs + 1):
             self.train_loader.sampler.set_epoch(epoch)
@@ -404,7 +407,7 @@ class TrainDDP:
                 )
 
             self.student.module.update_gumbel_temperature(epoch)
-            with tqdm(total=len(self.train_loader), ncols=100, disable=self.rank != 0) as _tqdm:
+            with tqdm(total=len(self.train_loader), ncols=100) as _tqdm:
                 if self.rank == 0:
                     _tqdm.set_description("epoch: {}/{}".format(epoch, self.num_epochs))
                 for images, targets in self.train_loader:
@@ -433,14 +436,14 @@ class TrainDDP:
                             self.target_temperature
                         )
 
-                        rc_loss = torch.tensor(0.0, device=images.device, dtype=torch.float32)
+                        rc_loss = torch.tensor(0)
                         for i in range(len(feature_list_student)):
                             rc_loss = rc_loss + self.rc_loss(
                                 feature_list_student[i], feature_list_teacher[i]
                             )
 
+                        # Explicitly compute mask_loss
                         from model.student.ResNet_sparse import SoftMaskedConv2d
-
                         mask_loss = torch.tensor(0.0, device=images.device, dtype=torch.float32)
                         matched_layers = 0
                         for name, module in self.student.module.named_modules():
@@ -449,13 +452,13 @@ class TrainDDP:
                                 found = False
                                 adjusted_name = name.replace("module.", "")
                                 for mask_module in self.student.module.mask_modules:
-                                    #if mask_module.mask.shape[0] == filters.shape[0] and mask_module.layer_name == adjusted_name:
-                                    m = mask_module.mask
-                                    correlation, active_indices = self.mask_loss(filters, m)
-                                    mask_loss += correlation
-                                    found = True
-                                    matched_layers += 1
-                                    break
+                                    if mask_module.mask.shape[0] == filters.shape[0] and mask_module.layer_name == adjusted_name:
+                                        m = mask_module.mask
+                                        correlation, active_indices = self.mask_loss(filters, m)
+                                        mask_loss += correlation
+                                        found = True
+                                        matched_layers += 1
+                                        break
                                 if not found and self.rank == 0:
                                     self.logger.warning(f"No mask found for layer {name} (adjusted: {adjusted_name})")
 
@@ -555,42 +558,29 @@ class TrainDDP:
                     + "M"
                 )
 
-                filter_avgs = []
-                for name, module in self.student.module.named_modules():
-                    if isinstance(module, SoftMaskedConv2d):
-                        filters = module.weight
-                        filter_mean = filters.view(filters.size(0), -1).mean(dim=1)
-                        layer_avg = round(filter_mean.mean().item(), 7)
-                        filter_avgs.append(layer_avg)
-                self.logger.info("[Train filter avg] Epoch {0} : ".format(epoch) + str(filter_avgs))
-
             # Validation
             if self.rank == 0:
                 self.student.eval()
                 self.student.module.ticket = True
-                meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
+                meter_top1.reset()
 
                 with torch.no_grad():
                     with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
                         _tqdm.set_description("Validation epoch: {}/{}".format(epoch, self.num_epochs))
                         for images, targets in self.val_loader:
                             images = images.cuda()
-                            targets = targets.cuda().float()
-
-                            if torch.isnan(images).any() or torch.isinf(images).any() or torch.isnan(targets).any() or torch.isinf(targets).any():
-                                self.logger.warning("Invalid input detected in validation (NaN or Inf)")
-                                continue
-
+                            targets = targets.cuda()
                             logits_student, _ = self.student(images)
-                            logits_student = logits_student.squeeze(1)
-                            preds = (torch.sigmoid(logits_student) > 0.5).float()
-                            correct = (preds == targets).sum().item()
-                            prec1 = 100. * correct / images.size(0)
+                            prec1 = utils.get_accuracy(
+                                logits_student, targets, topk=(1)
+                            )
                             n = images.size(0)
-                            meter_top1.update(prec1, n)
+                            meter_top1.update(prec1.item(), n)
+                            
 
                             _tqdm.set_postfix(
-                                val_acc="{:.4f}".format(meter_top1.avg),
+                                top1="{:.4f}".format(meter_top1.avg)
+                           
                             )
                             _tqdm.update(1)
                             time.sleep(0.01)
@@ -611,7 +601,9 @@ class TrainDDP:
                 masks = []
                 for _, m in enumerate(self.student.module.mask_modules):
                     masks.append(round(m.mask.mean().item(), 2))
-                self.logger.info("[Val mask avg] Epoch {0} : ".format(epoch) + str(masks))
+                self.logger.info(
+                    "[Val mask avg] Epoch {0} : ".format(epoch) + str(masks)
+                )
 
                 self.logger.info(
                     "[Val model Flops] Epoch {0} : ".format(epoch)
@@ -619,18 +611,18 @@ class TrainDDP:
                     + "M"
                 )
 
+                self.start_epoch += 1
                 if self.best_prec1 < meter_top1.avg:
                     self.best_prec1 = meter_top1.avg
-                    self.save_student_ckpt(True, epoch)
+                    self.save_student_ckpt(True)
                 else:
-                    self.save_student_ckpt(False, epoch)
+                    self.save_student_ckpt(False)
 
                 self.logger.info(
-                    " => Best top1 accuracy on validation before finetune : " + str(self.best_prec1)
+                    " => Best top1 accuracy before finetune : " + str(self.best_prec1)
                 )
-
         if self.rank == 0:
-            self.logger.info("Train finished!")
+            self.logger.info("Trian finished!")
 
     def main(self):
         self.dist_init()
