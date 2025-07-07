@@ -62,12 +62,17 @@ class SoftMaskedConv2d(nn.Module):
     def update_gumbel_temperature(self, gumbel_temperature):
         self.gumbel_temperature = gumbel_temperature
 
-    def forward(self, x, ticket, gumbel_temperature=None):
+    def forward(self, x, ticket=False, gumbel_temperature=None):
+        # Use provided gumbel_temperature or fall back to stored value
         gumbel_temp = gumbel_temperature if gumbel_temperature is not None else self.gumbel_temperature
         self.mask = self.compute_mask(ticket, gumbel_temp)
         masked_weight = self.weight * self.mask
         out = F.conv2d(
-            x, weight=masked_weight, bias=self.bias, stride=self.stride, padding=self.padding
+            x,
+            weight=masked_weight,
+            bias=self.bias,
+            stride=self.stride,
+            padding=self.padding,
         )
         self.feature_map_h, self.feature_map_w = out.shape[2], out.shape[3]
         return out
