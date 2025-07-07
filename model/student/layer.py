@@ -1,3 +1,4 @@
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -48,8 +49,7 @@ class SoftMaskedConv2d(nn.Module):
 
     def init_mask(self):
         self.mask_weight = nn.Parameter(torch.Tensor(self.out_channels, 2, 1, 1))
-        nn.init.normal_(self.mask_weight, mean=0.0, std=0.1)  # تغییر مقداردهی اولیه
-        self.ticket = False
+        nn.init.kaiming_normal_(self.mask_weight)
 
     def compute_mask(self, ticket, gumbel_temperature):
         if ticket:
