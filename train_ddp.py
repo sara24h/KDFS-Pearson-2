@@ -376,7 +376,7 @@ class TrainDDP:
                 meter_maskloss.reset()
                 meter_loss.reset()
                 meter_top1.reset()
-                meter_top5.reset()
+                
                 lr = (
                     self.optim_weight.state_dict()["param_groups"][0]["lr"]
                     if epoch > 1
