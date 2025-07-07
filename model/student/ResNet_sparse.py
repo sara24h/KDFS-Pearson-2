@@ -196,9 +196,9 @@ class BasicBlock_sparse(nn.Module):
                 nn.BatchNorm2d(self.expansion * planes),
             )
 
-    def forward(self, x, ticket):
-        out = F.relu(self.bn1(self.conv1(x, ticket)))
-        out = self.bn2(self.conv2(out, ticket))
+    def forward(self, x, ticket, gumbel_temperature=None):
+        out = F.relu(self.bn1(self.conv1(x, ticket, gumbel_temperature)))
+        out = self.bn2(self.conv2(out, ticket, gumbel_temperature))
         out += self.downsample(x)
         out = F.relu(out)
         return out
