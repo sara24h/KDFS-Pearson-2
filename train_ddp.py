@@ -417,7 +417,7 @@ class TrainDDP:
                         else:
                             if self.rank == 0:
                                 self.logger.warning("No layers matched for mask loss calculation")
-                        )
+                        
 
                         total_loss = (
                             ori_loss
