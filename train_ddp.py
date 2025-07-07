@@ -302,7 +302,7 @@ class TrainDDP:
         self.optim_weight = torch.optim.Adamax(
             weight_params, lr=self.lr, weight_decay=self.weight_decay, eps=1e-7
         )
-        self.optim_mask = torch.optim.Adamax(mask_params, lr=self.lr, eps=1e-7)
+        self.optim_mask = torch.optim.Adamax(mask_params, lr=self.lr*10, eps=1e-7)
 
         self.scheduler_student_weight = scheduler.CosineAnnealingLRWarmup(
             self.optim_weight,
