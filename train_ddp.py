@@ -366,9 +366,7 @@ class TrainDDP:
         scaler = GradScaler('cuda')
         
         for epoch in range(self.start_epoch + 1, self.num_epochs + 1):
-            if not self.dali:
-                self.train_loader.sampler.set_epoch(epoch)
-            # train
+           
             self.student.train()
             self.student.module.ticket = False
             if self.rank == 0:
