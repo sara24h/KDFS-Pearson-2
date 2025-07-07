@@ -341,6 +341,7 @@ class TrainDDP:
             self.train_loader.sampler.set_epoch(epoch)
             self.student.train()
             self.student.module.ticket = False
+            self.student.module.update_gumbel_temperature(epoch)
             if self.rank == 0:
                 meter_oriloss.reset()
                 meter_kdloss.reset()
@@ -365,7 +366,7 @@ class TrainDDP:
                     targets = targets.cuda().float()
 
                     with autocast():
-                        logits_student, feature_list_student = self.student(images)
+                        logits_student, feature_list_student = self.student(images, ticket=False, gumbel_temperature=self.student.module.gumbel_temperature)
                         logits_student = logits_student.squeeze(1)
                         with torch.no_grad():
                             logits_teacher, feature_list_teacher = self.teacher(images)
@@ -513,7 +514,7 @@ class TrainDDP:
                         for images, targets in self.val_loader:
                             images = images.cuda()
                             targets = targets.cuda().float()
-                            logits_student, _ = self.student(images)
+                            logits_student, _ = self.student(images, ticket=True, gumbel_temperature=self.student.module.gumbel_temperature)
                             logits_student = logits_student.squeeze(1)
 
 
