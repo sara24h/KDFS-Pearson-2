@@ -20,6 +20,17 @@ from torch import amp
 
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 
+Flops_baselines = {
+    "ResNet_50": {
+        "rvf10k": 4134,
+        "hardfakevsrealfaces": 4134,
+        "140k": 4134,
+        "200k": 4134,
+        "190k": 4134,
+        "330k": 4134
+    }
+}
+
 class TrainDDP:
     def __init__(self, args):
         self.args = args
@@ -47,6 +58,7 @@ class TrainDDP:
         self.coef_rcloss = args.coef_rcloss
         self.coef_maskloss = args.coef_maskloss
         self.resume = args.resume
+        self.compress_rate = getattr(args, 'compress_rate', 0.5)  # مقدار پیش‌فرض
 
         self.start_epoch = 0
         self.best_prec1 = 0
@@ -89,22 +101,16 @@ class TrainDDP:
         torch.cuda.set_device(self.local_rank)
 
     def result_init(self):
-        # tensorboard
         if self.rank == 0:
             self.writer = SummaryWriter(self.result_dir)
-
-            # log
             self.logger = utils.get_logger(
                 os.path.join(self.result_dir, "train_logger.log"), "train_logger"
             )
-
-            # config
             self.logger.info("train config:")
             self.logger.info(str(json.dumps(vars(self.args), indent=4)))
             utils.record_config(
                 self.args, os.path.join(self.result_dir, "train_config.txt")
             )
-
             self.logger.info("--------- Train -----------")
 
     def setup_seed(self):
@@ -232,22 +238,23 @@ class TrainDDP:
         state_dict = ckpt_teacher.get('config_state_dict', ckpt_teacher)
         resnet.load_state_dict(state_dict, strict=True)
         self.teacher = resnet.cuda()
+    
 
         if self.rank == 0:
             self.logger.info("Building student model")
-      
+
         self.student = ResNet_50_sparse_hardfakevsreal(
             gumbel_start_temperature=self.gumbel_start_temperature,
             gumbel_end_temperature=self.gumbel_end_temperature,
             num_epochs=self.num_epochs,
-            )
-
+        )
+    
     def define_loss(self):
         self.ori_loss = nn.BCEWithLogitsLoss().cuda()
         self.kd_loss = loss.KDLoss().cuda()
         self.rc_loss = loss.RCLoss().cuda()
-        self.mask_loss = loss.MaskLoss().cuda()  
-        
+        self.mask_loss = loss.MaskLoss().cuda()
+
     def define_optim(self):
         weight_params = map(
             lambda a: a[1],
@@ -287,12 +294,10 @@ class TrainDDP:
         )
 
     def resume_student_ckpt(self):
-        if not os.path.exists(self.resume):
-            raise FileNotFoundError(f"Checkpoint file not found: {self.resume}")
-        ckpt_student = torch.load(self.resume, map_location="cpu", weights_only=True)
+        ckpt_student = torch.load(self.resume)
         self.best_prec1 = ckpt_student["best_prec1"]
         self.start_epoch = ckpt_student["start_epoch"]
-        self.student.load_state_dict(ckpt_student["student"])
+        self.student.module.load_state_dict(ckpt_student["student"])
         self.optim_weight.load_state_dict(ckpt_student["optim_weight"])
         self.optim_mask.load_state_dict(ckpt_student["optim_mask"])
         self.scheduler_student_weight.load_state_dict(
@@ -304,27 +309,30 @@ class TrainDDP:
         if self.rank == 0:
             self.logger.info("=> Continue from epoch {}...".format(self.start_epoch + 1))
 
-    def save_student_ckpt(self, is_best, epoch):
-        if self.rank == 0:
-            folder = os.path.join(self.result_dir, "student_model")
-            if not os.path.exists(folder):
-                os.makedirs(folder)
+    def save_student_ckpt(self, is_bset):
+        folder = os.path.join(self.result_dir, "student_model")
+        if not os.path.exists(folder):
+            os.makedirs(folder)
 
-            ckpt_student = {}
-            ckpt_student["best_prec1"] = self.best_prec1
-            ckpt_student["start_epoch"] = epoch
-            ckpt_student["student"] = self.student.module.state_dict()
-            ckpt_student["optim_weight"] = self.optim_weight.state_dict()
-            ckpt_student["optim_mask"] = self.optim_mask.state_dict()
-            ckpt_student["scheduler_student_weight"] = self.scheduler_student_weight.state_dict()
-            ckpt_student["scheduler_student_mask"] = self.scheduler_student_mask.state_dict()
+        ckpt_student = {}
+        ckpt_student["best_prec1"] = self.best_prec1
+        ckpt_student["start_epoch"] = self.start_epoch
+        ckpt_student["student"] = self.student.module.state_dict()
+        ckpt_student["optim_weight"] = self.optim_weight.state_dict()
+        ckpt_student["optim_mask"] = self.optim_mask.state_dict()
+        ckpt_student[
+            "scheduler_student_weight"
+        ] = self.scheduler_student_weight.state_dict()
+        ckpt_student[
+            "scheduler_student_mask"
+        ] = self.scheduler_student_mask.state_dict()
 
-            if is_best:
-                torch.save(
-                    ckpt_student,
-                    os.path.join(folder, self.arch + "_sparse_best.pt"),
-                )
-            torch.save(ckpt_student, os.path.join(folder, self.arch + "_sparse_last.pt"))
+        if is_bset:
+            torch.save(
+                ckpt_student,
+                os.path.join(folder, self.arch + "_sparse_best.pt"),
+            )
+        torch.save(ckpt_student, os.path.join(folder, self.arch + "_sparse_last.pt"))
 
     def reduce_tensor(self, tensor):
         rt = tensor.clone()
@@ -333,12 +341,6 @@ class TrainDDP:
         return rt
 
     def train(self):
-        
-        self.student = DDP(self.student, find_unused_parameters=True)
-        
-        if self.rank == 0:
-            self.logger.info(f"Starting training from epoch: {self.start_epoch + 1}")
-            
         self.teacher = self.teacher.cuda()
         self.student = self.student.cuda()
         self.ori_loss = self.ori_loss.cuda()
@@ -346,12 +348,10 @@ class TrainDDP:
         self.rc_loss = self.rc_loss.cuda()
         self.mask_loss = self.mask_loss.cuda()
 
-        torch.cuda.empty_cache()
-        self.teacher.eval()
-        scaler = amp.GradScaler('cuda')
-
         if self.resume:
             self.resume_student_ckpt()
+
+        self.student = DDP(self.student, find_unused_parameters=True)
 
         if self.rank == 0:
             meter_oriloss = meter.AverageMeter("OriLoss", ":.4e")
@@ -361,10 +361,14 @@ class TrainDDP:
             meter_loss = meter.AverageMeter("Loss", ":.4e")
             meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
 
-        self.teacher.eval()
 
+        self.teacher.eval()
+        scaler = GradScaler('cuda')
+        
         for epoch in range(self.start_epoch + 1, self.num_epochs + 1):
-            self.train_loader.sampler.set_epoch(epoch)
+            if not self.dali:
+                self.train_loader.sampler.set_epoch(epoch)
+            # train
             self.student.train()
             self.student.module.ticket = False
             if self.rank == 0:
@@ -374,6 +378,7 @@ class TrainDDP:
                 meter_maskloss.reset()
                 meter_loss.reset()
                 meter_top1.reset()
+                meter_top5.reset()
                 lr = (
                     self.optim_weight.state_dict()["param_groups"][0]["lr"]
                     if epoch > 1
@@ -384,70 +389,65 @@ class TrainDDP:
             with tqdm(total=len(self.train_loader), ncols=100) as _tqdm:
                 if self.rank == 0:
                     _tqdm.set_description("epoch: {}/{}".format(epoch, self.num_epochs))
-                for images, targets in self.train_loader:
+                for data in self.train_loader:
                     self.optim_weight.zero_grad()
                     self.optim_mask.zero_grad()
-                    images = images.cuda()
-                    targets = targets.cuda().float()
+                    if self.dali:
+                        images = data[0]["data"].cuda()
+                        targets = data[0]["label"].squeeze().long().cuda()
+                    else:
+                        images = data[0].cuda()
+                        targets = data[1].cuda()
+                    logits_student, feature_list_student = self.student(images)
+                    with torch.no_grad():
+                        logits_teacher, feature_list_teacher = self.teacher(images)
 
-                    if torch.isnan(images).any() or torch.isinf(images).any() or torch.isnan(targets).any() or torch.isinf(targets).any():
+                    # loss
+                    ori_loss = self.ori_loss(logits_student, targets)
+
+                    kd_loss = (self.target_temperature**2) * self.kd_loss(
+                        logits_teacher / self.target_temperature,
+                        logits_student / self.target_temperature,
+                    )
+
+                    rc_loss = torch.tensor(0)
+                    for i in range(len(feature_list_student)):
+                        rc_loss = rc_loss + self.rc_loss(
+                            feature_list_student[i], feature_list_teacher[i]
+                        )
+
+                
+                    from model.student.ResNet_sparse import SoftMaskedConv2d
+                    mask_loss = torch.tensor(0.0, device=images.device, dtype=torch.float32)
+                    matched_layers = 0
+                    for name, module in self.student.module.named_modules():
+                        if isinstance(module, SoftMaskedConv2d):
+                            filters = module.weight
+                            found = False
+                            adjusted_name = name.replace("module.", "")
+                            for mask_module in self.student.module.mask_modules:
+                                if mask_module.mask.shape[0] == filters.shape[0] and mask_module.layer_name == adjusted_name:
+                                    m = mask_module.mask
+                                    correlation, active_indices = self.mask_loss(filters, m)
+                                    mask_loss += correlation
+                                    found = True
+                                    matched_layers += 1
+                                    break
+                            if not found and self.rank == 0:
+                                self.logger.warning(f"No mask found for layer {name} (adjusted: {adjusted_name})")
+
+                    if matched_layers > 0:
+                        mask_loss = mask_loss / matched_layers
+                    else:
                         if self.rank == 0:
-                            self.logger.warning("Invalid input detected (NaN or Inf)")
-                        continue
+                            self.logger.warning("No layers matched for mask loss calculation")
 
-                    with amp.autocast('cuda', enabled=True):
-                        logits_student, feature_list_student = self.student(images)
-                        logits_student = logits_student.squeeze(1)
-                        with torch.no_grad():
-                            logits_teacher, feature_list_teacher = self.teacher(images)
-                            logits_teacher = logits_teacher.squeeze(1)
-
-                        ori_loss = self.ori_loss(logits_student, targets)
-
-                        kd_loss = (self.target_temperature**2) * self.kd_loss(
-                            logits_teacher,
-                            logits_student,
-                            self.target_temperature
-                        )
-
-                        rc_loss = torch.tensor(0)
-                        for i in range(len(feature_list_student)):
-                            rc_loss = rc_loss + self.rc_loss(
-                                feature_list_student[i], feature_list_teacher[i]
-                            )
-
-                        # Explicitly compute mask_loss
-                        from model.student.ResNet_sparse import SoftMaskedConv2d
-                        mask_loss = torch.tensor(0.0, device=images.device, dtype=torch.float32)
-                        matched_layers = 0
-                        for name, module in self.student.module.named_modules():
-                            if isinstance(module, SoftMaskedConv2d):
-                                filters = module.weight
-                                found = False
-                                adjusted_name = name.replace("module.", "")
-                                for mask_module in self.student.module.mask_modules:
-                                    if mask_module.mask.shape[0] == filters.shape[0] and mask_module.layer_name == adjusted_name:
-                                        m = mask_module.mask
-                                        correlation, active_indices = self.mask_loss(filters, m)
-                                        mask_loss += correlation
-                                        found = True
-                                        matched_layers += 1
-                                        break
-                                if not found and self.rank == 0:
-                                    self.logger.warning(f"No mask found for layer {name} (adjusted: {adjusted_name})")
-
-                        if matched_layers > 0:
-                            mask_loss = mask_loss / matched_layers
-                        else:
-                            if self.rank == 0:
-                                self.logger.warning("No layers matched for mask loss calculation")
-
-                        total_loss = (
-                            ori_loss
-                            + self.coef_kdloss * kd_loss
-                            + self.coef_rcloss * rc_loss / len(feature_list_student)
-                            + self.coef_maskloss * mask_loss
-                        )
+                    total_loss = (
+                        ori_loss
+                        + self.coef_kdloss * kd_loss
+                        + self.coef_rcloss * rc_loss / len(feature_list_student)
+                        + self.coef_maskloss * mask_loss
+                    )
 
                     scaler.scale(total_loss).backward()
                     scaler.step(self.optim_weight)
@@ -543,18 +543,17 @@ class TrainDDP:
                         _tqdm.set_description("Validation epoch: {}/{}".format(epoch, self.num_epochs))
                         for images, targets in self.val_loader:
                             images = images.cuda()
-                            targets = targets.cuda()
+                            targets = targets.cuda().float()
                             logits_student, _ = self.student(images)
-                            prec1 = utils.get_accuracy(
-                                logits_student, targets, topk=(1)
-                            )
+                            logits_student = logits_student.squeeze(1)
+                            preds = (torch.sigmoid(logits_student) > 0.5).float()
+                            correct = (preds == targets).sum().item()
+                            prec1 = 100. * correct / images.size(0)
                             n = images.size(0)
-                            meter_top1.update(prec1.item(), n)
-                            
+                            meter_top1.update(prec1, n)
 
                             _tqdm.set_postfix(
                                 top1="{:.4f}".format(meter_top1.avg)
-                           
                             )
                             _tqdm.update(1)
                             time.sleep(0.01)
@@ -585,25 +584,29 @@ class TrainDDP:
                     + "M"
                 )
 
-                self.start_epoch += 1
+                self.start_epoch = epoch
                 if self.best_prec1 < meter_top1.avg:
                     self.best_prec1 = meter_top1.avg
-                    self.save_student_ckpt(True)
+                    self.save_student_ckpt(True, epoch)
                 else:
-                    self.save_student_ckpt(False)
+                    self.save_student_ckpt(False, epoch)
 
                 self.logger.info(
                     " => Best top1 accuracy before finetune : " + str(self.best_prec1)
                 )
         if self.rank == 0:
-            self.logger.info("Trian finished!")
+            self.logger.info("Train finished!")
 
     def main(self):
-        self.dist_init()
-        self.result_init()
-        self.setup_seed()
-        self.dataload()
-        self.build_model()
-        self.define_loss()
-        self.define_optim()
-        self.train()
+        try:
+            self.dist_init()
+            self.result_init()
+            self.setup_seed()
+            self.dataload()
+            self.build_model()
+            self.define_loss()
+            self.define_optim()
+            self.train()
+        finally:
+            if dist.is_initialized():
+                dist.destroy_process_group()
