@@ -101,7 +101,9 @@ class MaskLoss(nn.Module):
 
     def forward(self, filters, mask):
         correlation, active_indices = compute_active_filters_correlation(filters, mask)
-        return correlation, active_indices
+        # نرمال‌سازی به محدوده [0, 1]
+        mask_loss = correlation / (correlation.abs().max() + 1e-6)
+        return mask_loss, active_indices
 
 class CrossEntropyLabelSmooth(nn.Module):
     def __init__(self, num_classes, epsilon):
