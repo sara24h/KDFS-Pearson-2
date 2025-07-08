@@ -11,6 +11,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from torch.cuda.amp import autocast, GradScaler
+from torch.amp import GradScaler, autocast
 from data.dataset import Dataset_selector
 from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k
 from utils import utils, loss, meter, scheduler
@@ -238,35 +239,21 @@ class TrainDDP:
                 self.student.module.named_parameters(),
             ),
         )
-        mask_params = map(
+        mask_params = list(map(
             lambda a: a[1],
             filter(
                 lambda p: p[1].requires_grad and "mask" in p[0],
                 self.student.module.named_parameters(),
             ),
-        )
-
+        ))
+        print(f"Number of mask parameters: {len(mask_params)}")  
+        for i, param in enumerate(mask_params):
+            print(f"Mask param {i} shape: {param.shape}")
         self.optim_weight = torch.optim.Adamax(
             weight_params, lr=self.lr, weight_decay=self.weight_decay, eps=1e-7
         )
         self.optim_mask = torch.optim.Adamax(mask_params, lr=self.lr, eps=1e-7)
-
-        self.scheduler_student_weight = scheduler.CosineAnnealingLRWarmup(
-            self.optim_weight,
-            T_max=self.lr_decay_T_max,
-            eta_min=self.lr_decay_eta_min,
-            last_epoch=-1,
-            warmup_steps=self.warmup_steps,
-            warmup_start_lr=self.warmup_start_lr,
-        )
-        self.scheduler_student_mask = scheduler.CosineAnnealingLRWarmup(
-            self.optim_mask,
-            T_max=self.lr_decay_T_max,
-            eta_min=self.lr_decay_eta_min,
-            last_epoch=-1,
-            warmup_steps=self.warmup_steps,
-            warmup_start_lr=self.warmup_start_lr,
-        )
+    
 
     def resume_student_ckpt(self):
         if not os.path.exists(self.resume):
@@ -324,7 +311,8 @@ class TrainDDP:
 
         torch.cuda.empty_cache()
         self.teacher.eval()
-        scaler = GradScaler()
+        
+        #scaler = GradScaler('cuda')
 
         if self.resume:
             self.resume_student_ckpt()
@@ -364,7 +352,7 @@ class TrainDDP:
                     images = images.cuda()
                     targets = targets.cuda().float()
 
-                    with autocast():
+                    with autocast('cuda'):
                         logits_student, feature_list_student = self.student(images)
                         logits_student = logits_student.squeeze(1)
                         with torch.no_grad():
