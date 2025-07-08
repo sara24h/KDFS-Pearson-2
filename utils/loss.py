@@ -96,20 +96,12 @@ def compute_active_filters_correlation(filters, m):
     return normalized_correlation, active_indices
 
 class MaskLoss(nn.Module):
-    def __init__(self, target_sparsity=0.7, sparsity_weight=0.1):
+    def __init__(self):
         super(MaskLoss, self).__init__()
-        self.target_sparsity = target_sparsity
-        self.sparsity_weight = sparsity_weight
 
     def forward(self, filters, mask):
         correlation, active_indices = compute_active_filters_correlation(filters, mask)
-        normalized_correlation = torch.clamp(correlation / (correlation.abs().max() + 1e-6), 0, 1)
-        num_active = len(active_indices)
-        total_filters = mask.size(0)
-        current_sparsity = 1 - num_active / total_filters
-        sparsity_loss = (current_sparsity - self.target_sparsity) ** 2
-        total_loss = normalized_correlation + self.sparsity_weight * sparsity_loss
-        return total_loss, active_indices
+        return correlation, active_indices
 
 class CrossEntropyLabelSmooth(nn.Module):
     def __init__(self, num_classes, epsilon):
