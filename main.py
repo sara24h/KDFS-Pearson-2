@@ -160,7 +160,7 @@ def parse_args():
     parser.add_argument(
         "--teacher_ckpt_path",
         type=str,
-        default="/kaggle/working/KDFS/teacher_dir/teacher_model.pth",
+        default="/kaggle/working/KDFS-Pearson-2/teacher_dir/teacher_model.pth",
         help="The path where the teacher model is stored",
     )
     parser.add_argument(
