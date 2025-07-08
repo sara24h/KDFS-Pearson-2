@@ -10,8 +10,7 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-from torch.cuda.amp import autocast, GradScaler
-from torch.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast  # به‌روز‌رسانی به نسخه جدید
 from data.dataset import Dataset_selector
 from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k
 from utils import utils, loss, meter, scheduler
@@ -20,6 +19,13 @@ from model.teacher.ResNet import ResNet_50_hardfakevsreal
 
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 
+Flops_baselines = {
+    "ResNet_50": {
+        "hardfakevsrealfaces": 7700.0,
+        "rvf10k": 5000.0,
+        "140k": 5390.0,
+    }
+}
 
 class TrainDDP:
     def __init__(self, args):
@@ -47,6 +53,7 @@ class TrainDDP:
         self.coef_kdloss = args.coef_kdloss
         self.coef_rcloss = args.coef_rcloss
         self.coef_maskloss = args.coef_maskloss
+        self.compress_rate = args.compress_rate
         self.resume = args.resume
 
         self.start_epoch = 0
@@ -212,13 +219,18 @@ class TrainDDP:
 
         if self.rank == 0:
             self.logger.info("Building student model")
-
-        self.student = ResNet_50_sparse_hardfakevsreal(
+        if self.dataset_mode == "hardfake":
+            self.student = ResNet_50_sparse_hardfakevsreal(
                 gumbel_start_temperature=self.gumbel_start_temperature,
                 gumbel_end_temperature=self.gumbel_end_temperature,
                 num_epochs=self.num_epochs,
             )
-        
+        else:  # rvf10k or 140k
+            self.student = ResNet_50_sparse_rvf10k(
+                gumbel_start_temperature=self.gumbel_start_temperature,
+                gumbel_end_temperature=self.gumbel_end_temperature,
+                num_epochs=self.num_epochs,
+            )
         self.student.dataset_type = self.args.dataset_type
         num_ftrs = self.student.fc.in_features
         self.student.fc = nn.Linear(num_ftrs, 1)
@@ -246,14 +258,32 @@ class TrainDDP:
                 self.student.module.named_parameters(),
             ),
         ))
-        print(f"Number of mask parameters: {len(mask_params)}")  
-        for i, param in enumerate(mask_params):
-            print(f"Mask param {i} shape: {param.shape}")
+        if self.rank == 0:
+            self.logger.info(f"Number of mask parameters: {len(mask_params)}")
+            for i, param in enumerate(mask_params):
+                self.logger.info(f"Mask param {i} shape: {param.shape}")
+
         self.optim_weight = torch.optim.Adamax(
             weight_params, lr=self.lr, weight_decay=self.weight_decay, eps=1e-7
         )
         self.optim_mask = torch.optim.Adamax(mask_params, lr=self.lr, eps=1e-7)
-    
+
+        self.scheduler_student_weight = scheduler.CosineAnnealingLRWarmup(
+            self.optim_weight,
+            T_max=self.lr_decay_T_max,
+            eta_min=self.lr_decay_eta_min,
+            last_epoch=-1,
+            warmup_steps=self.warmup_steps,
+            warmup_start_lr=self.warmup_start_lr,
+        )
+        self.scheduler_student_mask = scheduler.CosineAnnealingLRWarmup(
+            self.optim_mask,
+            T_max=self.lr_decay_T_max,
+            eta_min=self.lr_decay_eta_min,
+            last_epoch=-1,
+            warmup_steps=self.warmup_steps,
+            warmup_start_lr=self.warmup_start_lr,
+        )
 
     def resume_student_ckpt(self):
         if not os.path.exists(self.resume):
@@ -311,8 +341,7 @@ class TrainDDP:
 
         torch.cuda.empty_cache()
         self.teacher.eval()
-        
-        #scaler = GradScaler('cuda')
+        scaler = GradScaler('cuda')  # استفاده از نسخه جدید GradScaler
 
         if self.resume:
             self.resume_student_ckpt()
@@ -324,7 +353,8 @@ class TrainDDP:
             meter_maskloss = meter.AverageMeter("MaskLoss", ":.6e")
             meter_loss = meter.AverageMeter("Loss", ":.4e")
             meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
-    
+            meter_val_loss = meter.AverageMeter("ValLoss", ":.4e")
+
         for epoch in range(self.start_epoch + 1, self.num_epochs + 1):
             self.train_loader.sampler.set_epoch(epoch)
             self.student.train()
@@ -352,7 +382,7 @@ class TrainDDP:
                     images = images.cuda()
                     targets = targets.cuda().float()
 
-                    with autocast('cuda'):
+                    with autocast('cuda'):  # استفاده از نسخه جدید autocast
                         logits_student, feature_list_student = self.student(images)
                         logits_student = logits_student.squeeze(1)
                         with torch.no_grad():
@@ -372,31 +402,11 @@ class TrainDDP:
                                 feature_list_student[i], feature_list_teacher[i]
                             )
 
-                        from model.student.ResNet_sparse import SoftMaskedConv2d
-
-                        mask_loss = torch.tensor(0.0, device=images.device, dtype=torch.float32)
-                        matched_layers = 0
-                        for name, module in self.student.module.named_modules():
-                            if isinstance(module, SoftMaskedConv2d):
-                                filters = module.weight
-                                found = False
-                                adjusted_name = name.replace("module.", "")
-                                for mask_module in self.student.module.mask_modules:
-                                    m = mask_module.mask
-                                    correlation, active_indices = self.mask_loss(filters, m)
-                                    mask_loss += correlation
-                                    found = True
-                                    matched_layers += 1
-                                    break
-                                if not found and self.rank == 0:
-                                    self.logger.warning(f"No mask found for layer {name} (adjusted: {adjusted_name})")
-
-                        if matched_layers > 0:
-                            mask_loss = mask_loss / matched_layers
-                        else:
-                            if self.rank == 0:
-                                self.logger.warning("No layers matched for mask loss calculation")
-                        
+                        Flops_baseline = Flops_baselines[self.arch][self.args.dataset_type]
+                        Flops = self.student.module.get_flops()
+                        mask_loss = self.mask_loss(
+                            Flops, Flops_baseline * (10**6), self.compress_rate
+                        ) * 1000  # مقیاس‌بندی mask_loss
 
                         total_loss = (
                             ori_loss
@@ -406,6 +416,13 @@ class TrainDDP:
                         )
 
                     scaler.scale(total_loss).backward()
+
+                    # چاپ گرادیان‌های mask_weight برای دیباگ
+                    if self.rank == 0:
+                        for name, param in self.student.module.named_parameters():
+                            if 'mask_weight' in name and param.grad is not None:
+                                self.logger.info(f"Gradient norm for {name}: {param.grad.norm().item()}")
+
                     scaler.step(self.optim_weight)
                     scaler.step(self.optim_mask)
                     scaler.update()
@@ -432,6 +449,9 @@ class TrainDDP:
                         meter_maskloss.update(self.coef_maskloss * reduced_mask_loss.item(), n)
                         meter_loss.update(reduced_total_loss.item(), n)
                         meter_top1.update(reduced_prec1.item(), n)
+
+                        # چاپ mask_loss برای دیباگ
+                        self.logger.info(f"MaskLoss: {reduced_mask_loss.item():.6f}")
 
                         _tqdm.set_postfix(
                             loss="{:.4f}".format(meter_loss.avg),
@@ -480,9 +500,14 @@ class TrainDDP:
                 )
 
                 masks = []
-                for _, m in enumerate(self.student.module.mask_modules):
+                for i, m in enumerate(self.student.module.mask_modules):
                     masks.append(round(m.mask.mean().item(), 2))
                 self.logger.info("[Train mask avg] Epoch {0} : ".format(epoch) + str(masks))
+
+                # محاسبه دستی فلاپس برای لایه اول
+                m = self.student.module.mask_modules[0]
+                Flops_conv = m.feature_map_h * m.feature_map_w * m.kernel_size * m.kernel_size * m.in_channels * m.mask.sum()
+                self.logger.info(f"Manual Flops for layer 0: {Flops_conv.item() / (10**6):.2f}M")
 
                 self.logger.info(
                     "[Train model Flops] Epoch {0} : ".format(epoch)
@@ -495,6 +520,7 @@ class TrainDDP:
                 self.student.eval()
                 self.student.module.ticket = True
                 meter_top1.reset()
+                meter_val_loss.reset()
                 with torch.no_grad():
                     with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
                         _tqdm.set_description("Validation epoch: {}/{}".format(epoch, self.num_epochs))
@@ -504,6 +530,8 @@ class TrainDDP:
                             logits_student, _ = self.student(images)
                             logits_student = logits_student.squeeze(1)
 
+                            val_loss = self.ori_loss(logits_student, targets)
+                            meter_val_loss.update(val_loss.item(), images.size(0))
 
                             preds = (torch.sigmoid(logits_student) > 0.5).float()
                             correct = (preds == targets).sum().item()
@@ -512,27 +540,29 @@ class TrainDDP:
                             meter_top1.update(prec1, n)
 
                             _tqdm.set_postfix(
-                                val_acc="{:.4f}".format(meter_top1.avg)
-                            
+                                val_acc="{:.4f}".format(meter_top1.avg),
+                                val_loss="{:.4f}".format(meter_val_loss.avg)
                             )
                             _tqdm.update(1)
                             time.sleep(0.01)
 
                 Flops = self.student.module.get_flops()
                 self.writer.add_scalar("val/acc/top1", meter_top1.avg, global_step=epoch)
+                self.writer.add_scalar("val/loss/ori_loss", meter_val_loss.avg, global_step=epoch)
                 self.writer.add_scalar("val/Flops", Flops, global_step=epoch)
 
                 self.logger.info(
                     "[Val] "
                     "Epoch {0} : "
-                    "Val_Acc {val_acc:.2f}".format(
+                    "Val_Acc {val_acc:.2f}, Val_Loss {val_loss:.4f}".format(
                         epoch,
                         val_acc=meter_top1.avg,
+                        val_loss=meter_val_loss.avg
                     )
                 )
 
                 masks = []
-                for _, m in enumerate(self.student.module.mask_modules):
+                for i, m in enumerate(self.student.module.mask_modules):
                     masks.append(round(m.mask.mean().item(), 2))
                 self.logger.info("[Val mask avg] Epoch {0} : ".format(epoch) + str(masks))
 
