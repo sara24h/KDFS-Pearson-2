@@ -1,4 +1,3 @@
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -8,7 +7,7 @@ import math
 def sigmoid(x):
     return float(1.0 / (1.0 + np.exp(-x)))
 
-def hard_sigmod(x):
+def hard_sigmoid(x):
     return torch.min(torch.max(x + 0.5, torch.zeros_like(x)), torch.ones_like(x))
 
 class SoftMaskedConv2d(nn.Module):
@@ -34,8 +33,7 @@ class SoftMaskedConv2d(nn.Module):
         self.init_mask()
 
         self.mask = torch.ones([self.out_channels, 1, 1, 1])
-        self.gumbel_temperature = 1.0  # Match train.py config
-
+        self.gumbel_temperature = 1.0
         self.feature_map_h = 0
         self.feature_map_w = 0
 
@@ -53,18 +51,21 @@ class SoftMaskedConv2d(nn.Module):
 
     def compute_mask(self, ticket, gumbel_temperature):
         if ticket:
+            # در حالت ticket=True، از آرگ‌مکس استفاده می‌شود
             mask = torch.argmax(self.mask_weight, dim=1).unsqueeze(1).float()
         else:
-            mask = F.gumbel_softmax(
-                logits=self.mask_weight, tau=gumbel_temperature, hard=True, dim=1
-            )[:, 1, :, :].unsqueeze(1)
-        return mask  # shape = [C, 1, 1, 1]
+            # تنظیم دستی ماسک‌ها به 20 درصد فیلترهای فعال
+            mask = torch.zeros([self.out_channels, 1, 1, 1], device=self.weight.device)
+            num_active = int(0.2 * self.out_channels)  # 20 درصد فیلترها فعال
+            indices = torch.randperm(self.out_channels)[:num_active]  # انتخاب تصادفی
+            mask[indices] = 1.0
+        return mask
 
     def update_gumbel_temperature(self, gumbel_temperature):
         self.gumbel_temperature = gumbel_temperature
 
     def forward(self, x, ticket=False, gumbel_temperature=None):
-        # Use provided gumbel_temperature or fall back to stored value
+        # استفاده از gumbel_temperature ورودی یا مقدار ذخیره‌شده
         gumbel_temp = gumbel_temperature if gumbel_temperature is not None else self.gumbel_temperature
         self.mask = self.compute_mask(ticket, gumbel_temp)
         masked_weight = self.weight * self.mask
