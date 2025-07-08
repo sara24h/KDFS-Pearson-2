@@ -19,6 +19,13 @@ from model.teacher.ResNet import ResNet_50_hardfakevsreal
 
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 
+Flops_baselines = {
+    "ResNet_50": {
+        "hardfakevsrealfaces": 7700.0,
+        "rvf10k": 5000.0,
+        "140k": 5390.0,
+    }
+}
 
 class TrainDDP:
     def __init__(self, args):
@@ -46,6 +53,7 @@ class TrainDDP:
         self.coef_kdloss = args.coef_kdloss
         self.coef_rcloss = args.coef_rcloss
         self.coef_maskloss = args.coef_maskloss
+        self.compress_rate = args.compress_rate
         self.resume = args.resume
 
         self.start_epoch = 0
@@ -211,13 +219,18 @@ class TrainDDP:
 
         if self.rank == 0:
             self.logger.info("Building student model")
-
-        self.student = ResNet_50_sparse_hardfakevsreal(
+        if self.dataset_mode == "hardfake":
+            self.student = ResNet_50_sparse_hardfakevsreal(
                 gumbel_start_temperature=self.gumbel_start_temperature,
                 gumbel_end_temperature=self.gumbel_end_temperature,
                 num_epochs=self.num_epochs,
             )
-        
+        else:  # rvf10k or 140k
+            self.student = ResNet_50_sparse_rvf10k(
+                gumbel_start_temperature=self.gumbel_start_temperature,
+                gumbel_end_temperature=self.gumbel_end_temperature,
+                num_epochs=self.num_epochs,
+            )
         self.student.dataset_type = self.args.dataset_type
         num_ftrs = self.student.fc.in_features
         self.student.fc = nn.Linear(num_ftrs, 1)
@@ -336,7 +349,8 @@ class TrainDDP:
             meter_maskloss = meter.AverageMeter("MaskLoss", ":.6e")
             meter_loss = meter.AverageMeter("Loss", ":.4e")
             meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
-    
+            meter_val_loss = meter.AverageMeter("ValLoss", ":.4e")  # Added validation loss meter
+
         for epoch in range(self.start_epoch + 1, self.num_epochs + 1):
             self.train_loader.sampler.set_epoch(epoch)
             self.student.train()
@@ -384,31 +398,11 @@ class TrainDDP:
                                 feature_list_student[i], feature_list_teacher[i]
                             )
 
-                        from model.student.ResNet_sparse import SoftMaskedConv2d
-
-                        mask_loss = torch.tensor(0.0, device=images.device, dtype=torch.float32)
-                        matched_layers = 0
-                        for name, module in self.student.module.named_modules():
-                            if isinstance(module, SoftMaskedConv2d):
-                                filters = module.weight
-                                found = False
-                                adjusted_name = name.replace("module.", "")
-                                for mask_module in self.student.module.mask_modules:
-                                    m = mask_module.mask
-                                    correlation, active_indices = self.mask_loss(filters, m)
-                                    mask_loss += correlation
-                                    found = True
-                                    matched_layers += 1
-                                    break
-                                if not found and self.rank == 0:
-                                    self.logger.warning(f"No mask found for layer {name} (adjusted: {adjusted_name})")
-
-                        if matched_layers > 0:
-                            mask_loss = mask_loss / matched_layers
-                        else:
-                            if self.rank == 0:
-                                self.logger.warning("No layers matched for mask loss calculation")
-                        
+                        Flops_baseline = Flops_baselines[self.arch][self.args.dataset_type]
+                        Flops = self.student.module.get_flops()
+                        mask_loss = self.mask_loss(
+                            Flops, Flops_baseline * (10**6), self.compress_rate
+                        )
 
                         total_loss = (
                             ori_loss
@@ -507,6 +501,7 @@ class TrainDDP:
                 self.student.eval()
                 self.student.module.ticket = True
                 meter_top1.reset()
+                meter_val_loss.reset()  # Reset validation loss meter
                 with torch.no_grad():
                     with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
                         _tqdm.set_description("Validation epoch: {}/{}".format(epoch, self.num_epochs))
@@ -516,6 +511,9 @@ class TrainDDP:
                             logits_student, _ = self.student(images)
                             logits_student = logits_student.squeeze(1)
 
+                            # Compute validation loss
+                            val_loss = self.ori_loss(logits_student, targets)
+                            meter_val_loss.update(val_loss.item(), images.size(0))
 
                             preds = (torch.sigmoid(logits_student) > 0.5).float()
                             correct = (preds == targets).sum().item()
@@ -524,22 +522,24 @@ class TrainDDP:
                             meter_top1.update(prec1, n)
 
                             _tqdm.set_postfix(
-                                val_acc="{:.4f}".format(meter_top1.avg)
-                            
+                                val_acc="{:.4f}".format(meter_top1.avg),
+                                val_loss="{:.4f}".format(meter_val_loss.avg)
                             )
                             _tqdm.update(1)
                             time.sleep(0.01)
 
                 Flops = self.student.module.get_flops()
                 self.writer.add_scalar("val/acc/top1", meter_top1.avg, global_step=epoch)
+                self.writer.add_scalar("val/loss/ori_loss", meter_val_loss.avg, global_step=epoch)  # Log validation loss
                 self.writer.add_scalar("val/Flops", Flops, global_step=epoch)
 
                 self.logger.info(
                     "[Val] "
                     "Epoch {0} : "
-                    "Val_Acc {val_acc:.2f}".format(
+                    "Val_Acc {val_acc:.2f}, Val_Loss {val_loss:.4f}".format(
                         epoch,
                         val_acc=meter_top1.avg,
+                        val_loss=meter_val_loss.avg
                     )
                 )
 
