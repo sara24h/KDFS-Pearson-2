@@ -41,6 +41,12 @@ def parse_args():
         help="train, finetune or test",
     )
     parser.add_argument(
+        "--compress_rate",
+        type=float,
+        default=0.3,
+        help="Compress rate of the student model",
+    )
+    parser.add_argument(
         "--dataset_mode",
         type=str,
         default="hardfake",
