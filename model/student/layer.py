@@ -47,17 +47,16 @@ class SoftMaskedConv2d(nn.Module):
 
     def init_mask(self):
         self.mask_weight = nn.Parameter(torch.Tensor(self.out_channels, 2, 1, 1))
-        nn.init.kaiming_normal_(self.mask_weight)
+        nn.init.uniform_(self.mask_weight, a=-2.0, b=2.0)  # تغییر به توزیع یکنواخت
 
     def compute_mask(self, ticket, gumbel_temperature):
         if ticket:
-            # در حالت ticket=True، از آرگ‌مکس استفاده می‌شود
             mask = torch.argmax(self.mask_weight, dim=1).unsqueeze(1).float()
         else:
             # تنظیم دستی ماسک‌ها به 20 درصد فیلترهای فعال
             mask = torch.zeros([self.out_channels, 1, 1, 1], device=self.weight.device)
             num_active = int(0.2 * self.out_channels)  # 20 درصد فیلترها فعال
-            indices = torch.randperm(self.out_channels)[:num_active]  # انتخاب تصادفی
+            indices = torch.randperm(self.out_channels, device=self.weight.device)[:num_active]
             mask[indices] = 1.0
         return mask
 
@@ -65,7 +64,6 @@ class SoftMaskedConv2d(nn.Module):
         self.gumbel_temperature = gumbel_temperature
 
     def forward(self, x, ticket=False, gumbel_temperature=None):
-        # استفاده از gumbel_temperature ورودی یا مقدار ذخیره‌شده
         gumbel_temp = gumbel_temperature if gumbel_temperature is not None else self.gumbel_temperature
         self.mask = self.compute_mask(ticket, gumbel_temp)
         masked_weight = self.weight * self.mask
