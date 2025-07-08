@@ -260,7 +260,7 @@ class TrainDDP:
             warmup_start_lr=self.warmup_start_lr,
         )
         self.scheduler_student_mask = scheduler.CosineAnnealingLRWarmup(
-            self.optim_mask,
+            #self.optim_mask,
             T_max=self.lr_decay_T_max,
             eta_min=self.lr_decay_eta_min,
             last_epoch=-1,
@@ -276,7 +276,7 @@ class TrainDDP:
         self.start_epoch = ckpt_student["start_epoch"]
         self.student.module.load_state_dict(ckpt_student["student"])
         self.optim_weight.load_state_dict(ckpt_student["optim_weight"])
-        self.optim_mask.load_state_dict(ckpt_student["optim_mask"])
+        #self.optim_mask.load_state_dict(ckpt_student["optim_mask"])
         self.scheduler_student_weight.load_state_dict(
             ckpt_student["scheduler_student_weight"]
         )
